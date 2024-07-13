@@ -1,0 +1,11 @@
+[workspace]
+
+members = [
+    "strato-ddhp", 
+    "strato-model",
+    "strato-portfolio",
+    "strato-exchange",
+    "strato-client"
+]
+
+resolver = "2"
