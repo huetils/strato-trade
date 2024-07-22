@@ -1,5 +1,10 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+pub mod grid;
+pub mod ma;
+
+/// Function to initialize the trading model
+pub fn initialize_model() {
+    // Placeholder for initialization logic
+    println!("Initializing trading model...");
 }
 
 #[cfg(test)]
@@ -7,8 +12,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    fn test_initialize_model() {
+        initialize_model();
     }
 }

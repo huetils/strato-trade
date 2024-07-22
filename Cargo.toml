@@ -5,7 +5,8 @@ members = [
     "strato-model",
     "strato-portfolio",
     "strato-exchange",
-    "strato-client"
+    "strato-client",
+    "strato-utils",
 ]
 
 resolver = "2"
