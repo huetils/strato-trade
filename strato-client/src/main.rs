@@ -41,6 +41,7 @@ fn test_execute_trades(
     exit_conditions: &[bool],
     initial_balance: f64,
 ) -> (f64, usize, usize, usize, f64) {
+    let fee_percentage = 0.0005; // 0.05% fee
     let mut balance = initial_balance;
     let mut total_trades = 0;
     let mut winning_trades = 0;
@@ -63,9 +64,11 @@ fn test_execute_trades(
             }
 
             let trade_profit = exit_price - entry_price;
-            balance += trade_profit;
+            let fee = fee_percentage * ((entry_price + exit_price) / 2.0);
+            let net_profit = trade_profit - fee;
+            balance += net_profit;
 
-            if trade_profit > 0.0 {
+            if net_profit > 0.0 {
                 winning_trades += 1;
             } else {
                 losing_trades += 1;
@@ -100,7 +103,7 @@ fn main() {
     let mut direction = true; // true for upward trend, false for downward trend
     let mut last_switch = Instant::now();
 
-    while ohlc_collection.len() < 525600 {
+    while ohlc_collection.len() < 1440 {
         if last_switch.elapsed() > Duration::from_secs(30) {
             sentiment = if sentiment == "bullish" {
                 "bearish"
