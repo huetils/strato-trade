@@ -1,5 +1,6 @@
 pub mod grid;
-pub mod ma;
+pub mod hft;
+pub mod trend;
 
 /// Function to initialize the trading model
 pub fn initialize_model() {

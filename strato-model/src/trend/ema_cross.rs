@@ -81,7 +81,7 @@ impl TradingStrategy for MovingAverageCrossover {
 
 #[cfg(test)]
 mod tests {
-    use super::strategy::*;
+    use super::*;
 
     #[test]
     fn test_moving_average_crossover() {
