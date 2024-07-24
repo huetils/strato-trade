@@ -1,11 +1,17 @@
 use chrono::Utc;
 use tracing::debug;
 
+/// The number of historical values (window size) to consider in the model. This parameter
+/// determines the depth of the historical data used to calculate the weighted sum of VOI, OIR, and
+/// MPB. According to the study, a window size of 5 provides a balance between responsiveness and
+/// stability in trading signals.
 pub const DEFAULT_K: usize = 5;
+
+/// The threshold value for decision making in the model. This parameter sets the sensitivity of
+/// the trading signals by defining the boundary for buy and sell decisions. The study suggests a
+/// threshold value of 0.15, which ensures that trading signals are generated only when there is a
+/// significant combined effect of VOI, OIR, and MPB.
 pub const DEFAULT_Q: f64 = 0.15;
-pub const TRADE_SIZE: f64 = 0.001;
-pub const DEFAULT_SPREAD_THRESHOLD: f64 = 0.05; // Adjust based on backtesting and performance analysis
-pub const DEFAULT_TRANSACTION_COST: f64 = 0.005; // 0.5%
 
 pub enum Side {
     Buy,
@@ -102,6 +108,22 @@ impl TradingState {
         (ask - bid) / bid * 100.0
     }
 
+    /// Calculates the mid-price as the average of the bid and ask prices.
+    ///
+    /// This metric provides a reference price point that is used to calculate the Mid-Price Basis (MPB).
+    ///
+    /// # Arguments
+    ///
+    /// * `bid` - Current bid price.
+    /// * `ask` - Current ask price.
+    ///
+    /// # Returns
+    ///
+    /// * `mid_price` - Mid-price of the bid-ask spread.
+    pub fn calculate_mid_price(bid: f64, ask: f64) -> f64 {
+        (bid + ask) / 2.0
+    }
+
     /// Implements the Parametrized Linear Model for trading decisions.
     ///
     /// This model uses a weighted sum of the historical values of VOI, OIR, and MPB to make trading decisions.
@@ -124,9 +146,12 @@ impl TradingState {
         current_voi: f64,
         current_oir: f64,
         current_mpb: f64,
-        k: usize,
-        q: f64,
+        k: Option<usize>,
+        q: Option<f64>,
     ) -> f64 {
+        let k = k.unwrap_or(DEFAULT_K);
+        let q = q.unwrap_or(DEFAULT_Q);
+
         // Update history
         self.voi_history.push(current_voi);
         self.oir_history.push(current_oir);
@@ -159,6 +184,57 @@ impl TradingState {
 
         // No trade signal
         0.0
+    }
+
+    /// Ensure the spread is within the acceptable threshold
+    ///
+    /// A wide spread may indicate lower liquidity or higher uncertainty in the market, leading to
+    /// more expensive trades and potentially lower profits.
+    ///
+    /// # Arguments
+    ///
+    /// * `spread` - Current bid-ask spread percentage.
+    /// * `spread_threshold` - Maximum acceptable spread percentage.
+    ///
+    /// # Returns
+    ///
+    /// * `is_threshold_constrained` - Boolean indicating if the spread is within the threshold.
+    pub fn is_threshold_constrained(spread: f64, spread_threshold: f64) -> bool {
+        spread <= spread_threshold
+    }
+
+    /// Including the `voi.abs() > 0.0` check ensures that trades are only considered when there is a
+    /// significant volume order imbalance (VOI).
+    ///
+    /// **Usage**
+    ///
+    /// - VOI represents the difference between bid and ask volumes. A non-zero VOI indicates a
+    /// discrepancy between supply and demand, which can signal potential price movements.
+    /// - If `voi.abs()` is greater than 0, it implies that there is a meaningful imbalance in the
+    /// order book, making it a more reliable signal for trading decisions.
+    ///
+    /// **Avoiding Noise**
+    ///
+    /// - By ensuring `voi.abs() > 0.0`, the strategy avoids acting on insignificant imbalances that
+    /// may not lead to meaningful price movements. This helps in filtering out noise and focusing
+    /// on more substantial trading opportunities.
+    ///
+    /// **Reinforcing Trading Signals**
+    ///
+    /// - Combining the spread threshold check with the VOI condition reinforces the reliability of
+    /// the trading signals. It ensures that trades are only executed when both the market spread
+    /// is favorable, and there is a significant order imbalance, thereby improving the accuracy of
+    /// the strategy.
+    ///
+    /// # Arguments
+    ///
+    /// * `voi` - Volume Order Imbalance.
+    ///
+    /// # Returns
+    ///
+    /// * `is_voi_detected` - Boolean indicating if a significant VOI is detected.
+    pub fn is_voi_detected(voi: f64) -> bool {
+        voi.abs() > 0.0
     }
 
     /// Executes a trade based on the provided price and side.
