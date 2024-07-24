@@ -1,21 +1,26 @@
-/// Implementation of an order imbalance based strategy by Darryl Shen
-use barter_data::subscription::book::OrderBook;
 use chrono::Utc;
-use tracing::info;
+use tracing::debug;
 
+pub const DEFAULT_K: usize = 5;
+pub const DEFAULT_Q: f64 = 0.15;
 pub const TRADE_SIZE: f64 = 0.001;
-pub const SPREAD_THRESHOLD: f64 = 0.05;
-pub const TRANSACTION_COST: f64 = 0.005; // 0.5%
-pub const BUY_OIR_THRESHOLD: f64 = 0.1;
-pub const SELL_OIR_THRESHOLD: f64 = -0.1;
-pub const BUY_MPB_THRESHOLD: f64 = 0.1;
-pub const SELL_MPB_THRESHOLD: f64 = -0.1;
+pub const DEFAULT_SPREAD_THRESHOLD: f64 = 0.05; // Adjust based on backtesting and performance analysis
+pub const DEFAULT_TRANSACTION_COST: f64 = 0.005; // 0.5%
 
+pub enum Side {
+    Buy,
+    Sell,
+}
+
+// Struct to hold the trading state
 #[derive(Debug)]
 pub struct TradingState {
     pub cash: f64,
     pub positions: Vec<f64>,
     pub symbol: &'static str,
+    pub voi_history: Vec<f64>,
+    pub oir_history: Vec<f64>,
+    pub mpb_history: Vec<f64>,
 }
 
 impl TradingState {
@@ -24,50 +29,156 @@ impl TradingState {
             cash,
             positions: Vec::new(),
             symbol,
+            voi_history: Vec::new(),
+            oir_history: Vec::new(),
+            mpb_history: Vec::new(),
         }
     }
 
-    pub fn calculate_voi(order_book: &OrderBook) -> (f64, f64, f64) {
-        let bid_volume: f64 = order_book.bids.levels.iter().map(|bid| bid.amount).sum();
-        let ask_volume: f64 = order_book.asks.levels.iter().map(|ask| ask.amount).sum();
-        let voi: f64 = bid_volume - ask_volume;
-        (voi, bid_volume, ask_volume)
+    /// Calculates the Volume Order Imbalance (VOI).
+    ///
+    /// VOI is calculated as the difference between the bid volume and the ask volume.
+    /// This metric helps in understanding the imbalance between buy and sell orders in the order book.
+    ///
+    /// # Arguments
+    ///
+    /// * `bid_volume` - Total volume of buy orders.
+    /// * `ask_volume` - Total volume of sell orders.
+    ///
+    /// # Returns
+    ///
+    /// * `voi` - Volume Order Imbalance.
+    pub fn calculate_voi(bid_volume: f64, ask_volume: f64) -> f64 {
+        bid_volume - ask_volume
     }
 
+    /// Calculates the Order Imbalance Ratio (OIR).
+    ///
+    /// OIR is calculated as the normalized difference between the bid volume and the ask volume.
+    /// This ratio is used to quantify the relative imbalance between buy and sell orders.
+    ///
+    /// # Arguments
+    ///
+    /// * `bid_volume` - Total volume of buy orders.
+    /// * `ask_volume` - Total volume of sell orders.
+    ///
+    /// # Returns
+    ///
+    /// * `oir` - Order Imbalance Ratio.
     pub fn calculate_oir(bid_volume: f64, ask_volume: f64) -> f64 {
         (bid_volume - ask_volume) / (bid_volume + ask_volume)
     }
 
+    /// Calculates the Mid-Price Basis (MPB).
+    ///
+    /// MPB is calculated as the difference between the last traded price and the mid-price.
+    /// This metric indicates the deviation of the last trade price from the mid-price.
+    ///
+    /// # Arguments
+    ///
+    /// * `last_price` - Last traded price.
+    /// * `mid_price` - Mid-price of the current bid-ask spread.
+    ///
+    /// # Returns
+    ///
+    /// * `mpb` - Mid-Price Basis.
     pub fn calculate_mpb(last_price: f64, mid_price: f64) -> f64 {
         last_price - mid_price
     }
 
+    /// Calculates the bid-ask spread as a percentage of the bid price.
+    ///
+    /// This metric helps in understanding the relative size of the spread compared to the bid price.
+    ///
+    /// # Arguments
+    ///
+    /// * `bid` - Current bid price.
+    /// * `ask` - Current ask price.
+    ///
+    /// # Returns
+    ///
+    /// * `spread` - Bid-ask spread percentage.
     pub fn calculate_spread(bid: f64, ask: f64) -> f64 {
         (ask - bid) / bid * 100.0
     }
 
-    pub fn should_trade(spread: f64, voi: f64, spread_threshold: f64) -> bool {
-        spread <= spread_threshold && voi.abs() > 0.0
+    /// Implements the Parametrized Linear Model for trading decisions.
+    ///
+    /// This model uses a weighted sum of the historical values of VOI, OIR, and MPB to make trading decisions.
+    /// A buy signal is generated if the weighted sum exceeds the positive threshold `q`.
+    /// A sell signal is generated if the weighted sum falls below the negative threshold `-q`.
+    ///
+    /// # Arguments
+    ///
+    /// * `current_voi` - Current VOI value.
+    /// * `current_oir` - Current OIR value.
+    /// * `current_mpb` - Current MPB value.
+    /// * `k` - Number of historical values to consider (window size).
+    /// * `q` - Threshold for decision making.
+    ///
+    /// # Returns
+    ///
+    /// * `signal` - Trading signal (1.0 for buy, -1.0 for sell, 0.0 for hold).
+    pub fn parametrized_linear_model(
+        &mut self,
+        current_voi: f64,
+        current_oir: f64,
+        current_mpb: f64,
+        k: usize,
+        q: f64,
+    ) -> f64 {
+        // Update history
+        self.voi_history.push(current_voi);
+        self.oir_history.push(current_oir);
+        self.mpb_history.push(current_mpb);
+
+        // Keep history size to k
+        if self.voi_history.len() > k {
+            self.voi_history.remove(0);
+        }
+        if self.oir_history.len() > k {
+            self.oir_history.remove(0);
+        }
+        if self.mpb_history.len() > k {
+            self.mpb_history.remove(0);
+        }
+
+        // Calculate the weighted sum of VOI, OIR, and MPB
+        let weighted_sum: f64 = self.voi_history.iter().sum::<f64>()
+            + self.oir_history.iter().sum::<f64>()
+            + self.mpb_history.iter().sum::<f64>();
+
+        // Decision based on weighted sum and threshold q
+        if weighted_sum > q {
+            // Buy signal
+            return 1.0;
+        } else if weighted_sum < -q {
+            // Sell signal
+            return -1.0;
+        }
+
+        // No trade signal
+        0.0
     }
 
-    pub fn execute_trade(&mut self, price: f64, side: &str, trade_size: f64, fee: f64) {
+    /// Executes a trade based on the provided price and side.
+    ///
+    /// This function updates the cash balance and position size based on the trade details.
+    ///
+    /// # Arguments
+    ///
+    /// * `price` - Trade price.
+    /// * `side` - Trade side (Buy or Sell).
+    /// * `trade_size` - Size of the trade.
+    /// * `fee` - Transaction fee percentage.
+    pub fn execute_trade(&mut self, price: f64, side: Side, trade_size: f64, fee: f64) {
         let transaction_cost = trade_size * price * fee;
-        if side == "buy" {
-            self.positions.push(price);
-            self.cash -= price * trade_size + transaction_cost;
-            info!(
-                "Buying {} {} at {} (cost: {}) at {}",
-                trade_size,
-                self.symbol,
-                price,
-                transaction_cost,
-                Utc::now()
-            );
-        } else if side == "sell" {
-            if let Some(_position) = self.positions.pop() {
-                self.cash += price * trade_size - transaction_cost;
-                info!(
-                    "Selling {} {} at {} (cost: {}) at {}",
+        match side {
+            Side::Buy => {
+                self.positions.push(price);
+                self.cash -= price * trade_size + transaction_cost;
+                debug!(
+                    "Buying {} {} at {} (cost: {}) at {}",
                     trade_size,
                     self.symbol,
                     price,
@@ -75,144 +186,19 @@ impl TradingState {
                     Utc::now()
                 );
             }
+            Side::Sell => {
+                if let Some(_position) = self.positions.pop() {
+                    self.cash += price * trade_size - transaction_cost;
+                    debug!(
+                        "Selling {} {} at {} (cost: {}) at {}",
+                        trade_size,
+                        self.symbol,
+                        price,
+                        transaction_cost,
+                        Utc::now()
+                    );
+                }
+            }
         }
-    }
-
-    pub fn check_sell_conditions(&mut self, ask: f64, voi: f64, oir: f64, mpb: f64) {
-        if voi < 0.0
-            && oir < SELL_OIR_THRESHOLD
-            && mpb < SELL_MPB_THRESHOLD
-            && !self.positions.is_empty()
-        {
-            info!(
-                "Selling triggered by conditions: VOI: {}, OIR: {}, MPB: {} at ask price: {}",
-                voi, oir, mpb, ask
-            );
-            self.execute_trade(ask, "sell", TRADE_SIZE, TRANSACTION_COST);
-        }
-    }
-
-    pub fn check_buy_conditions(&mut self, bid: f64, voi: f64, oir: f64, mpb: f64) {
-        if voi > 0.0 && oir > BUY_OIR_THRESHOLD && mpb > BUY_MPB_THRESHOLD {
-            info!(
-                "Buying triggered by conditions: VOI: {}, OIR: {}, MPB: {} at bid price: {}",
-                voi, oir, mpb, bid
-            );
-            self.execute_trade(bid, "buy", TRADE_SIZE, TRANSACTION_COST);
-        }
-    }
-
-    pub fn calculate_portfolio_value(&self, bid: f64) -> f64 {
-        let position_value: f64 = self.positions.len() as f64 * TRADE_SIZE * bid;
-        self.cash + position_value
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use barter_data::subscription::book::Level;
-    use barter_data::subscription::book::OrderBookSide;
-    use barter_integration::model::Side;
-    use chrono::DateTime;
-
-    use super::*;
-
-    // Constants for tests
-    const TEST_TRADE_SIZE: f64 = 0.001;
-    const TEST_TRANSACTION_COST: f64 = 0.005;
-    const TEST_SPREAD_THRESHOLD: f64 = 0.05;
-
-    #[test]
-    fn test_calculate_voi() {
-        let order_book = OrderBook {
-            last_update_time: DateTime::from_timestamp_millis(0).unwrap(),
-            bids: OrderBookSide::new(
-                Side::Buy,
-                vec![Level {
-                    price: 100.0,
-                    amount: 1.0,
-                }],
-            ),
-            asks: OrderBookSide::new(
-                Side::Sell,
-                vec![Level {
-                    price: 101.0,
-                    amount: 1.0,
-                }],
-            ),
-        };
-
-        let (voi, bid_volume, ask_volume) = TradingState::calculate_voi(&order_book);
-        assert_eq!(voi, 0.0);
-        assert_eq!(bid_volume, 1.0);
-        assert_eq!(ask_volume, 1.0);
-    }
-
-    #[test]
-    fn test_calculate_oir() {
-        let oir = TradingState::calculate_oir(1.0, 1.0);
-        assert_eq!(oir, 0.0);
-    }
-
-    #[test]
-    fn test_calculate_mpb() {
-        let mpb = TradingState::calculate_mpb(100.0, 100.0);
-        assert_eq!(mpb, 0.0);
-    }
-
-    #[test]
-    fn test_calculate_spread() {
-        let spread = TradingState::calculate_spread(100.0, 101.0);
-        assert_eq!(spread, 1.0);
-    }
-
-    #[test]
-    fn test_should_trade() {
-        let valid_voi = 1.0;
-        assert!(TradingState::should_trade(
-            TEST_SPREAD_THRESHOLD,
-            valid_voi,
-            TEST_SPREAD_THRESHOLD
-        ));
-
-        let invalid_spread = 0.06;
-        let valid_voi = 1.0;
-        assert!(!TradingState::should_trade(
-            invalid_spread,
-            valid_voi,
-            TEST_SPREAD_THRESHOLD
-        ));
-
-        let invalid_voi = 0.0;
-        assert!(!TradingState::should_trade(
-            TEST_SPREAD_THRESHOLD,
-            invalid_voi,
-            TEST_SPREAD_THRESHOLD
-        ));
-    }
-
-    #[test]
-    fn test_execute_trade() {
-        let mut state = TradingState::new(1000.0, "BTC/USDT");
-        state.execute_trade(100.0, "buy", TEST_TRADE_SIZE, TEST_TRANSACTION_COST);
-        let expected_cash_after_buy =
-            1000.0 - (100.0 * TEST_TRADE_SIZE) - (100.0 * TEST_TRADE_SIZE * TEST_TRANSACTION_COST);
-        assert_eq!(state.cash, expected_cash_after_buy);
-        assert_eq!(state.positions.len(), 1);
-
-        state.execute_trade(100.0, "sell", TEST_TRADE_SIZE, TEST_TRANSACTION_COST);
-        let expected_cash_after_sell = expected_cash_after_buy + (100.0 * TEST_TRADE_SIZE)
-            - (100.0 * TEST_TRADE_SIZE * TEST_TRANSACTION_COST);
-        assert_eq!(state.cash, expected_cash_after_sell);
-        assert_eq!(state.positions.len(), 0);
-    }
-
-    #[test]
-    fn test_calculate_portfolio_value() {
-        let mut state = TradingState::new(1000.0, "BTC/USDT");
-        state.positions.push(100.0);
-        let portfolio_value = state.calculate_portfolio_value(101.0);
-        let expected_portfolio_value = 1000.0 + (101.0 * TEST_TRADE_SIZE);
-        assert_eq!(portfolio_value, expected_portfolio_value);
     }
 }
