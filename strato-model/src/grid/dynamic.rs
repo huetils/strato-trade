@@ -13,10 +13,18 @@ use strato_utils::ta::sma::sma;
 use strato_utils::vars::ohlc::Ohlc;
 
 const DEFAULT_MA_LEN: usize = 100;
-const DEFAULT_MA_TYPE: &str = "RMA";
 const DEFAULT_ATR_LEN: usize = 14;
 const DEFAULT_BAND_MULT: f64 = 2.5;
-const DEFAULT_GRID_LOGIC: &str = "ATR";
+
+pub enum MaType {
+    Rma,
+    Sma,
+}
+
+pub enum GridLogic {
+    Atr,
+    Percent,
+}
 
 pub struct TradingState {
     pub balance: f64,
@@ -28,9 +36,9 @@ pub struct GridParams {
     /// Length of the Rolling Moving Average (RMA) period.
     pub ma_len: usize,
     /// Type of Moving Average (e.g., RMA, SMA, etc.)
-    pub ma_type: String,
+    pub ma_type: MaType,
     /// Grid Logic (e.g., ATR, Percent)
-    pub grid_logic: String,
+    pub grid_logic: GridLogic,
     /// Multiplier for the ATR to determine grid levels.
     pub band_mult: f64,
     /// Length of the Average True Range (ATR) period.
@@ -41,8 +49,8 @@ impl Default for GridParams {
     fn default() -> Self {
         GridParams {
             ma_len: DEFAULT_MA_LEN,
-            ma_type: DEFAULT_MA_TYPE.into(),
-            grid_logic: DEFAULT_GRID_LOGIC.into(),
+            ma_type: MaType::Rma,
+            grid_logic: GridLogic::Atr,
             band_mult: DEFAULT_BAND_MULT,
             atr_len: DEFAULT_ATR_LEN,
         }
@@ -66,10 +74,9 @@ impl Default for GridParams {
 /// - `discount_levels`: The calculated discount levels.
 pub fn generate_grid_levels(ohlc: &[Ohlc], params: &GridParams) -> (Vec<f64>, Vec<f64>) {
     let src = calculate_src(&ohlc);
-    let ma_values = match params.ma_type.as_str() {
-        "SMA" => sma(&src, params.ma_len),
-        "RMA" => rma(&src, params.ma_len),
-        _ => rma(&src, params.ma_len), // Default to RMA
+    let ma_values = match params.ma_type {
+        MaType::Sma => sma(&src, params.ma_len),
+        MaType::Rma => rma(&src, params.ma_len),
     };
     let atr_values = atr(&ohlc, params.atr_len);
     calculate_grid_levels(&ma_values, &atr_values, params.band_mult)
@@ -87,8 +94,7 @@ pub fn generate_grid_levels(ohlc: &[Ohlc], params: &GridParams) -> (Vec<f64>, Ve
 ///
 /// A vector of source prices.
 pub fn calculate_src(ohlc: &[Ohlc]) -> Vec<f64> {
-    ohlc
-        .iter()
+    ohlc.iter()
         .map(|c| (c.open + c.high + c.low + c.close) / 4.0)
         .collect()
 }
@@ -127,7 +133,7 @@ pub fn calculate_grid_levels(rma: &[f64], atr: &[f64], band_mult: f64) -> (Vec<f
 /// Checks entry conditions based on the discount levels.
 ///
 /// The entry condition is met when the low price of the ohlc is below the discount level.
-/// 
+///
 /// # Arguments
 ///
 /// * `ohlc` - A slice of `Ohlc` structs representing market data.
@@ -137,15 +143,14 @@ pub fn calculate_grid_levels(rma: &[f64], atr: &[f64], band_mult: f64) -> (Vec<f
 ///
 /// A vector of boolean values indicating whether the entry condition is met for each ohlc.
 pub fn check_entry_conditions(ohlc: &[Ohlc], discount_levels: &[f64]) -> Vec<bool> {
-    ohlc
-        .iter()
+    ohlc.iter()
         .zip(discount_levels.iter())
         .map(|(c, &d)| c.low < d)
         .collect()
 }
 
 /// Checks exit conditions based on the premium levels.
-/// 
+///
 /// The exit condition is met when the high price of the ohlc is above the premium level.
 ///
 /// # Arguments
@@ -157,8 +162,7 @@ pub fn check_entry_conditions(ohlc: &[Ohlc], discount_levels: &[f64]) -> Vec<boo
 ///
 /// A vector of boolean values indicating whether the exit condition is met for each ohlc.
 pub fn check_exit_conditions(ohlc: &[Ohlc], premium_levels: &[f64]) -> Vec<bool> {
-    ohlc
-        .iter()
+    ohlc.iter()
         .zip(premium_levels.iter())
         .map(|(c, &p)| c.high > p)
         .collect()
