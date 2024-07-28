@@ -31,7 +31,6 @@ fn generate_candle(previous_close: f64, _sentiment: &str, direction: &mut bool) 
         high,
         low,
         close,
-        ..Default::default()
     }
 }
 

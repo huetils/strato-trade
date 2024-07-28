@@ -73,12 +73,12 @@ impl Default for GridParams {
 /// - `premium_levels`: The calculated premium levels.
 /// - `discount_levels`: The calculated discount levels.
 pub fn generate_grid_levels(ohlc: &[Ohlc], params: &GridParams) -> (Vec<f64>, Vec<f64>) {
-    let src = calculate_src(&ohlc);
+    let src = calculate_src(ohlc);
     let ma_values = match params.ma_type {
         MaType::Sma => sma(&src, params.ma_len),
         MaType::Rma => rma(&src, params.ma_len),
     };
-    let atr_values = atr(&ohlc, params.atr_len);
+    let atr_values = atr(ohlc, params.atr_len);
     calculate_grid_levels(&ma_values, &atr_values, params.band_mult)
 }
 

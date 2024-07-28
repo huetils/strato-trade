@@ -1,3 +1,4 @@
+pub mod relative_depths;
 pub mod ta;
 pub mod vars;
 

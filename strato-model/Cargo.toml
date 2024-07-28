@@ -11,3 +11,5 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 tokio = "1.39.0"
 chrono = "0.4.38"
+hftbacktest = { git = "https://github.com/nkaz001/hftbacktest.git" }
+anyhow = "1.0.86"
