@@ -1,12 +1,14 @@
 use hftbacktest::backtest::assettype::LinearAsset;
+use hftbacktest::backtest::data::read_npz_file;
+use hftbacktest::backtest::models::CommonFees;
 use hftbacktest::backtest::models::IntpOrderLatency;
 use hftbacktest::backtest::models::PowerProbQueueFunc3;
 use hftbacktest::backtest::models::ProbQueueModel;
-use hftbacktest::backtest::reader::read_npz;
-use hftbacktest::backtest::reader::DataSource;
+use hftbacktest::backtest::models::TradingValueFeeModel;
 use hftbacktest::backtest::recorder::BacktestRecorder;
 use hftbacktest::backtest::AssetBuilder;
 use hftbacktest::backtest::Backtest;
+use hftbacktest::backtest::DataSource;
 use hftbacktest::backtest::ExchangeKind;
 use hftbacktest::prelude::ApplySnapshot;
 use hftbacktest::prelude::Bot;
@@ -27,17 +29,18 @@ fn prepare_backtest() -> Backtest<HashMapMarketDepth> {
         .collect();
 
     let hbt = Backtest::builder()
-        .add(
+        .add_asset(
             AssetBuilder::new()
                 .data(data)
                 .latency_model(latency_model)
                 .asset_type(asset_type)
-                .maker_fee(-0.00005)
-                .taker_fee(0.0007)
+                .fee_model(TradingValueFeeModel::new(CommonFees::new(-0.00005, 0.0007)))
                 .queue_model(queue_model)
                 .depth(|| {
                     let mut depth = HashMapMarketDepth::new(0.000001, 1.0);
-                    depth.apply_snapshot(&read_npz("1000SHIBUSDT_20240501_SOD.npz").unwrap());
+                    depth.apply_snapshot(
+                        &read_npz_file("1000SHIBUSDT_20240501_SOD.npz", "data").unwrap(),
+                    );
                     depth
                 })
                 .exchange(ExchangeKind::NoPartialFillExchange)
