@@ -1,1 +1,17 @@
+# Unstable Features
+unstable_features = true
+
+# General Formatting Options
+hard_tabs = false
+max_width = 100
+tab_spaces = 4
+wrap_comments = true
+
+# Import Options
 imports_granularity = "Item"
+reorder_imports = true
+imports_layout = "Vertical"
+group_imports = "StdExternalCrate"
+
+# Code Style Options
+use_field_init_shorthand = true

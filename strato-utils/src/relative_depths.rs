@@ -1,31 +1,35 @@
-/// Calculates the relative bid and ask depths based on the relative half-spread, skew, position,
-/// and order quantity.
+/// Calculates the relative bid and ask depths based on the relative
+/// half-spread, skew, position, and order quantity.
 ///
-/// This helps set buy and sell prices that adjust to the market and how much you currently own.
-/// It can help manage risk and improve profits. For example, in a volatile market, you might set
-/// buy prices lower and sell prices higher.
+/// This helps set buy and sell prices that adjust to the market and how much
+/// you currently own. It can help manage risk and improve profits. For example,
+/// in a volatile market, you might set buy prices lower and sell prices higher.
 ///
 /// # Parameters
 ///
-/// - `relative_half_spread`: The base distance from the middle price for buy and sell prices.
-/// - `skew`: A factor used to adjust the spread based on the trader's current position. When you
-///   have a long position (holding more assets), you might want to buy less and sell more to
-///   reduce your position. Skew helps increase the bid depth (lowering the bid price) and decrease
-///   the ask depth (raising the ask price) to make it less likely to buy more and more likely to
-///   sell. Conversely, when you have a short position (holding fewer assets or negative position),
-///   you might want to buy more and sell less to increase your position. Skew helps decrease the
-///   bid depth (raising the bid price) and increase the ask depth (lowering the ask price).
-///   Use a non-zero skew when you need to manage your position size more carefully, especially in
-///   strategies where position size has a significant impact. For high-frequency trading based on
-///   order book imbalances, you might set `skew` to `0.0` as positions are held very briefly.
-/// - `position`: How much of the asset you currently own. Positive for owning more, negative for
-///   owing more.
+/// - `relative_half_spread`: The base distance from the middle price for buy
+///   and sell prices.
+/// - `skew`: A factor used to adjust the spread based on the trader's current
+///   position. When you have a long position (holding more assets), you might
+///   want to buy less and sell more to reduce your position. Skew helps
+///   increase the bid depth (lowering the bid price) and decrease the ask depth
+///   (raising the ask price) to make it less likely to buy more and more likely
+///   to sell. Conversely, when you have a short position (holding fewer assets
+///   or negative position), you might want to buy more and sell less to
+///   increase your position. Skew helps decrease the bid depth (raising the bid
+///   price) and increase the ask depth (lowering the ask price). Use a non-zero
+///   skew when you need to manage your position size more carefully, especially
+///   in strategies where position size has a significant impact. For
+///   high-frequency trading based on order book imbalances, you might set
+///   `skew` to `0.0` as positions are held very briefly.
+/// - `position`: How much of the asset you currently own. Positive for owning
+///   more, negative for owing more.
 /// - `order_qty`: The size of each order you want to place.
 ///
 /// # Returns
 ///
-/// A tuple containing the distances from the mid price for the buy and sell prices (relative bid
-/// depth and relative ask depth).
+/// A tuple containing the distances from the mid price for the buy and sell
+/// prices (relative bid depth and relative ask depth).
 ///
 /// # Example
 ///

@@ -1,19 +1,22 @@
+use std::fmt::Debug;
+
 use chrono::Utc;
 use hftbacktest::prelude::*;
-use std::fmt::Debug;
 use tracing::debug;
 use tracing::error;
 
-/// The number of historical values (window size) to consider in the model. This parameter
-/// determines the depth of the historical data used to calculate the weighted sum of VOI, OIR, and
-/// MPB. According to the study, a window size of 5 provides a balance between responsiveness and
-/// stability in trading signals.
+/// The number of historical values (window size) to consider in the model. This
+/// parameter determines the depth of the historical data used to calculate the
+/// weighted sum of VOI, OIR, and MPB. According to the study, a window size of
+/// 5 provides a balance between responsiveness and stability in trading
+/// signals.
 pub const DEFAULT_K: usize = 5;
 
-/// The threshold value for decision making in the model. This parameter sets the sensitivity of
-/// the trading signals by defining the boundary for buy and sell decisions. The study suggests a
-/// threshold value of 0.15, which ensures that trading signals are generated only when there is a
-/// significant combined effect of VOI, OIR, and MPB.
+/// The threshold value for decision making in the model. This parameter sets
+/// the sensitivity of the trading signals by defining the boundary for buy and
+/// sell decisions. The study suggests a threshold value of 0.15, which ensures
+/// that trading signals are generated only when there is a significant combined
+/// effect of VOI, OIR, and MPB.
 pub const DEFAULT_Q: f64 = 0.15;
 
 /// Future implementation for live trading
@@ -72,8 +75,9 @@ where
         let wait = true;
         let mut result = false;
 
-        // Use the signal to open a position. We might have to close any current position before
-        // opening a new one that is if the current position is the opposite of the signal
+        // Use the signal to open a position. We might have to close any current
+        // position before opening a new one that is if the current position is
+        // the opposite of the signal
         if signal == 1.0 {
             result = hbt
                 .submit_buy_order(
@@ -132,9 +136,11 @@ impl TradingState {
         }
     }
 
-    /// Calculates a smoothed price using a weighted average of the last traded price and the mid-price.
+    /// Calculates a smoothed price using a weighted average of the last traded
+    /// price and the mid-price.
     ///
-    /// This method combines the latest trade data with the mid-price for a more stable price indicator.
+    /// This method combines the latest trade data with the mid-price for a more
+    /// stable price indicator.
     ///
     /// # Arguments
     ///
@@ -156,7 +162,8 @@ impl TradingState {
 
     /// Calculates an exponentially weighted moving average (EWMA) of the price.
     ///
-    /// This method gives more weight to the most recent price while incorporating the previous smoothed price.
+    /// This method gives more weight to the most recent price while
+    /// incorporating the previous smoothed price.
     ///
     /// # Arguments
     ///
@@ -173,8 +180,9 @@ impl TradingState {
 
     /// Calculates the Volume Order Imbalance (VOI).
     ///
-    /// VOI is calculated as the difference between the bid volume and the ask volume.
-    /// This metric helps in understanding the imbalance between buy and sell orders in the order book.
+    /// VOI is calculated as the difference between the bid volume and the ask
+    /// volume. This metric helps in understanding the imbalance between buy
+    /// and sell orders in the order book.
     ///
     /// # Arguments
     ///
@@ -190,8 +198,9 @@ impl TradingState {
 
     /// Calculates the Order Imbalance Ratio (OIR).
     ///
-    /// OIR is calculated as the normalized difference between the bid volume and the ask volume.
-    /// This ratio is used to quantify the relative imbalance between buy and sell orders.
+    /// OIR is calculated as the normalized difference between the bid volume
+    /// and the ask volume. This ratio is used to quantify the relative
+    /// imbalance between buy and sell orders.
     ///
     /// # Arguments
     ///
@@ -207,8 +216,9 @@ impl TradingState {
 
     /// Calculates the Mid-Price Basis (MPB).
     ///
-    /// MPB is calculated as the difference between the last traded price and the mid-price.
-    /// This metric indicates the deviation of the last trade price from the mid-price.
+    /// MPB is calculated as the difference between the last traded price and
+    /// the mid-price. This metric indicates the deviation of the last trade
+    /// price from the mid-price.
     ///
     /// # Arguments
     ///
@@ -224,7 +234,8 @@ impl TradingState {
 
     /// Calculates the bid-ask spread as a percentage of the bid price.
     ///
-    /// This metric helps in understanding the relative size of the spread compared to the bid price.
+    /// This metric helps in understanding the relative size of the spread
+    /// compared to the bid price.
     ///
     /// # Arguments
     ///
@@ -240,7 +251,8 @@ impl TradingState {
 
     /// Calculates the mid-price as the average of the bid and ask prices.
     ///
-    /// This metric provides a reference price point that is used to calculate the Mid-Price Basis (MPB).
+    /// This metric provides a reference price point that is used to calculate
+    /// the Mid-Price Basis (MPB).
     ///
     /// # Arguments
     ///
@@ -256,9 +268,10 @@ impl TradingState {
 
     /// Implements the Parametrized Linear Model for trading decisions.
     ///
-    /// This model uses a weighted sum of the historical values of VOI, OIR, and MPB to make trading decisions.
-    /// A buy signal is generated if the weighted sum exceeds the positive threshold `q`.
-    /// A sell signal is generated if the weighted sum falls below the negative threshold `-q`.
+    /// This model uses a weighted sum of the historical values of VOI, OIR, and
+    /// MPB to make trading decisions. A buy signal is generated if the
+    /// weighted sum exceeds the positive threshold `q`. A sell signal is
+    /// generated if the weighted sum falls below the negative threshold `-q`.
     ///
     /// # Arguments
     ///
@@ -318,8 +331,9 @@ impl TradingState {
 
     /// Ensure the spread is within the acceptable threshold
     ///
-    /// A wide spread may indicate lower liquidity or higher uncertainty in the market, leading to
-    /// more expensive trades and potentially lower profits.
+    /// A wide spread may indicate lower liquidity or higher uncertainty in the
+    /// market, leading to more expensive trades and potentially lower
+    /// profits.
     ///
     /// # Arguments
     ///
@@ -328,33 +342,38 @@ impl TradingState {
     ///
     /// # Returns
     ///
-    /// * `is_threshold_constrained` - Boolean indicating if the spread is within the threshold.
+    /// * `is_threshold_constrained` - Boolean indicating if the spread is
+    ///   within the threshold.
     pub fn is_threshold_constrained(spread: f64, spread_threshold: f64) -> bool {
         spread <= spread_threshold
     }
 
-    /// Including the `voi.abs() > 0.0` check ensures that trades are only considered when there is a
-    /// significant volume order imbalance (VOI).
+    /// Including the `voi.abs() > 0.0` check ensures that trades are only
+    /// considered when there is a significant volume order imbalance (VOI).
     ///
     /// **Usage**
     ///
-    /// - VOI represents the difference between bid and ask volumes. A non-zero VOI indicates a
-    ///   discrepancy between supply and demand, which can signal potential price movements.
-    /// - If `voi.abs()` is greater than 0, it implies that there is a meaningful imbalance in the
-    ///   order book, making it a more reliable signal for trading decisions.
+    /// - VOI represents the difference between bid and ask volumes. A non-zero
+    ///   VOI indicates a discrepancy between supply and demand, which can
+    ///   signal potential price movements.
+    /// - If `voi.abs()` is greater than 0, it implies that there is a
+    ///   meaningful imbalance in the order book, making it a more reliable
+    ///   signal for trading decisions.
     ///
     /// **Avoiding Noise**
     ///
-    /// - By ensuring `voi.abs() > 0.0`, the strategy avoids acting on insignificant imbalances that
-    ///   may not lead to meaningful price movements. This helps in filtering out noise and focusing
-    ///   on more substantial trading opportunities.
+    /// - By ensuring `voi.abs() > 0.0`, the strategy avoids acting on
+    ///   insignificant imbalances that may not lead to meaningful price
+    ///   movements. This helps in filtering out noise and focusing on more
+    ///   substantial trading opportunities.
     ///
     /// **Reinforcing Trading Signals**
     ///
-    /// - Combining the spread threshold check with the VOI condition reinforces the reliability of
-    ///   the trading signals. It ensures that trades are only executed when both the market spread
-    ///   is favorable, and there is a significant order imbalance, thereby improving the accuracy of
-    ///   the strategy.
+    /// - Combining the spread threshold check with the VOI condition reinforces
+    ///   the reliability of the trading signals. It ensures that trades are
+    ///   only executed when both the market spread is favorable, and there is a
+    ///   significant order imbalance, thereby improving the accuracy of the
+    ///   strategy.
     ///
     /// # Arguments
     ///
@@ -362,14 +381,16 @@ impl TradingState {
     ///
     /// # Returns
     ///
-    /// * `is_voi_detected` - Boolean indicating if a significant VOI is detected.
+    /// * `is_voi_detected` - Boolean indicating if a significant VOI is
+    ///   detected.
     pub fn is_voi_detected(voi: f64) -> bool {
         voi.abs() > 0.0
     }
 
     /// Executes a trade based on the provided price and side.
     ///
-    /// This function updates the cash balance and position size based on the trade details.
+    /// This function updates the cash balance and position size based on the
+    /// trade details.
     ///
     /// # Arguments
     ///

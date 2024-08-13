@@ -1,6 +1,7 @@
-use rand::Rng;
 use std::time::Duration;
 use std::time::Instant;
+
+use rand::Rng;
 use strato_model::grid::dynamic::manage_grids;
 use strato_model::grid::dynamic::GridParams;
 use strato_utils::vars::ohlc::Ohlc;

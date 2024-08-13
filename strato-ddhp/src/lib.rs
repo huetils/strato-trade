@@ -54,35 +54,40 @@ pub fn calculate_fees(notional_value: f64, transaction_fee_rate: f64) -> f64 {
     notional_value * transaction_fee_rate
 }
 
-/// Determines the number of perpetual futures contracts needed to hedge the position.
+/// Determines the number of perpetual futures contracts needed to hedge the
+/// position.
 ///
 /// # Arguments
 ///
 /// * `current_total_delta` - Current total delta of the options position.
-/// * `target_total_delta` - Target total delta (typically zero for delta-neutral).
+/// * `target_total_delta` - Target total delta (typically zero for
+///   delta-neutral).
 ///
 /// # Returns
 ///
-/// The number of perpetual futures contracts to buy or sell to achieve the target delta.
+/// The number of perpetual futures contracts to buy or sell to achieve the
+/// target delta.
 pub fn calculate_perps_needed(current_total_delta: f64, target_total_delta: f64) -> f64 {
     target_total_delta - current_total_delta
 }
 
-/// Calculates the number of perpetual futures contracts needed to hedge the options position,
-/// along with the required margin and fees.
+/// Calculates the number of perpetual futures contracts needed to hedge the
+/// options position, along with the required margin and fees.
 ///
 /// # Arguments
 ///
 /// * `current_price` - Current price of the underlying asset.
 /// * `current_delta` - Current delta of the options.
 /// * `number_of_contracts` - Number of options contracts.
-/// * `target_total_delta` - Target total delta (typically zero for delta-neutral).
+/// * `target_total_delta` - Target total delta (typically zero for
+///   delta-neutral).
 /// * `leverage` - Leverage ratio (e.g., 10 for 10x leverage).
 /// * `transaction_fee_rate` - Transaction fee rate (e.g., 0.001 for 0.1%).
 ///
 /// # Returns
 ///
-/// A tuple containing the number of perpetual futures contracts needed, required margin, and transaction fees.
+/// A tuple containing the number of perpetual futures contracts needed,
+/// required margin, and transaction fees.
 pub fn get_perps_needed(
     current_price: f64,
     current_delta: f64,
