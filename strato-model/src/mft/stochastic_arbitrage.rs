@@ -11,21 +11,27 @@ use statrs::distribution::Normal;
 #[derive(Clone, Debug, Default)]
 pub struct OptionData {
     pub name: String,
-    pub s: f64,     // Underlying asset price
-    pub k: f64,     // Strike price
-    pub t: f64,     // Time to maturity (in years)
-    pub r: f64,     // Risk-free rate
-    pub sigma: f64, // Volatility
+    /// Underlying asset price
+    pub s: f64,
+    /// Strike price
+    pub k: f64,
+    /// Time to maturity (in years)
+    pub t: f64,
+    /// Risk-free rate
+    pub r: f64,
+    /// Volatility
+    pub sigma: f64,
+    /// Option type (call or put)
     pub option_type: String,
-    pub market_price: f64, // Current market price
+    /// Current market price
+    pub market_price: f64,
 }
 
-// Define portfolio structure
 pub struct Portfolio {
-    pub holdings: Vec<(String, f64)>, // (Option name, Position size)
+    /// Portfolio holdings (option name, position size)
+    pub holdings: Vec<(String, f64)>,
 }
 
-// Black-Scholes option pricing function
 fn black_scholes_price(s: f64, k: f64, t: f64, r: f64, sigma: f64, option_type: &str) -> f64 {
     let norm = Normal::new(0.0, 1.0).unwrap(); // No need for Univariate trait
     let d1 = (f64::ln(s / k) + (r + 0.5 * sigma * sigma) * t) / (sigma * t.sqrt());
