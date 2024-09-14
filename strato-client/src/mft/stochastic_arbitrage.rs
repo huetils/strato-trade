@@ -1,5 +1,4 @@
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // Example option data
     let option_data = vec![
         strato_model::mft::stochastic_arbitrage::OptionData {
             name: "Call1".to_string(),
@@ -23,14 +22,24 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
 
-    // Available capital for constructing the portfolio
-    let capital = 10000.0; // Example capital
+    // Total capital available for constructing the portfolio
+    let capital = 10000.0;
+
+    // Define risk levels for different investor profiles
+    let risk_levels = &[0.01, 0.1, 0.5, 1.0, 2.0];
+
+    // Simulated or historical index returns
+    let index_returns = vec![1.5, 0.5, 0.2]; // Example data, replace with real data
 
     // Construct the portfolio
-    let portfolio =
-        strato_model::mft::stochastic_arbitrage::construct_portfolio(option_data, capital);
+    let portfolio = strato_model::mft::stochastic_arbitrage::construct_portfolio(
+        option_data,
+        capital,
+        risk_levels,
+        index_returns,
+    );
 
-    // Display the portfolio holdings
+    // Display portfolio holdings
     for (name, position) in portfolio.holdings {
         println!("Option: {}, Position: {:.2}", name, position);
     }

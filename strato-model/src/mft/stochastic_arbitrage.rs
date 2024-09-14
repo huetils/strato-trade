@@ -218,6 +218,8 @@ pub fn find_arbitrage(
     transaction_costs: Vec<f64>,
     capital: f64,
     liquidity: Vec<f64>,
+    index_returns: Vec<f64>,
+    risk_levels: &[f64],
 ) -> Vec<f64> {
     let num_assets = prices.len(); // The number of options (assets) we are optimizing over.
 
@@ -269,6 +271,17 @@ pub fn find_arbitrage(
         problem = problem.with(constraint!(weights[i] <= liquidity[i]));
     }
 
+    // Convert weights from `Vec<Variable>` to `Vec<Expression>`
+    let weight_expressions: Vec<Expression> = weights.iter().map(|&w| w.into()).collect();
+
+    // Add stochastic dominance constraints (SSD)
+    add_stochastic_dominance_constraints(
+        &mut problem,
+        &weight_expressions,
+        &index_returns,
+        risk_levels,
+    );
+
     // Solve the problem:
     // The solver will find the optimal weights (wᵢ) that maximize the arbitrage profit while satisfying
     // the capital and liquidity constraints.
@@ -279,9 +292,37 @@ pub fn find_arbitrage(
     weights.iter().map(|&var| solution.value(var)).collect()
 }
 
+// Add stochastic dominance constraints (SSD)
+fn add_stochastic_dominance_constraints(
+    problem: &mut (impl SolverModel + Clone),
+    portfolio_payoffs: &[Expression],
+    index_payoffs: &[f64],
+    risk_levels: &[f64],
+) {
+    let num_assets = portfolio_payoffs.len();
+
+    for &risk_level in risk_levels {
+        for i in 0..num_assets {
+            // Create constraints for different levels of risk aversion
+            let portfolio_risk_adjusted = portfolio_payoffs[i].clone() * risk_level;
+            let index_risk_adjusted = index_payoffs[i] * risk_level;
+
+            // Ensure the portfolio payoff dominates the index payoff at this risk level
+            problem
+                .clone()
+                .with(constraint!(portfolio_risk_adjusted >= index_risk_adjusted));
+        }
+    }
+}
+
 /// Portfolio construction function
 /// This is only intended for demonstration purposes and should not be used in production
-pub fn construct_portfolio(option_data: Vec<OptionData>, capital: f64) -> Portfolio {
+pub fn construct_portfolio(
+    option_data: Vec<OptionData>,
+    capital: f64,
+    risk_levels: &[f64],
+    index_returns: Vec<f64>, // Pass real or simulated index returns as input
+) -> Portfolio {
     let mut prices: Vec<f64> = Vec::new();
     let transaction_costs: Vec<f64> = vec![0.01; option_data.len()]; // Simulate transaction costs
     let liquidity: Vec<f64> = vec![100.0; option_data.len()]; // Simulate liquidity limits
@@ -301,7 +342,14 @@ pub fn construct_portfolio(option_data: Vec<OptionData>, capital: f64) -> Portfo
     }
 
     // Find optimal portfolio weights via linear programming
-    let portfolio_weights = find_arbitrage(prices, transaction_costs, capital, liquidity);
+    let portfolio_weights = find_arbitrage(
+        prices,
+        transaction_costs,
+        capital,
+        liquidity,
+        index_returns, // Pass actual index returns here
+        risk_levels,   // Pass the input risk levels to find_arbitrage
+    );
 
     // Create portfolio holdings
     let holdings = option_data
