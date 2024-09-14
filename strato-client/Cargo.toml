@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-hftbacktest = "0.2.2"
+hftbacktest = "0.4.0"
 rand = "0.8.5"
 strato-model = { path = "../strato-model" }
 strato-utils = { path = "../strato-utils" }
+
+[profile.release]
+lto = true
+panic = "abort"
+codegen-units = 1

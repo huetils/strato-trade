@@ -6,7 +6,7 @@ use strato_model::grid::dynamic::manage_grids;
 use strato_model::grid::dynamic::GridParams;
 use strato_utils::vars::ohlc::Ohlc;
 
-fn generate_candle(previous_close: f64, _sentiment: &str, direction: &mut bool) -> Ohlc {
+pub fn generate_candle(previous_close: f64, _sentiment: &str, direction: &mut bool) -> Ohlc {
     let mut rng = rand::thread_rng();
     let max_change = 0.05; // max 5% change per ohlc
 
@@ -35,7 +35,7 @@ fn generate_candle(previous_close: f64, _sentiment: &str, direction: &mut bool) 
     }
 }
 
-fn test_execute_trades(
+pub fn test_execute_trades(
     ohlc_collection: &[Ohlc],
     entry_conditions: &[bool],
     exit_conditions: &[bool],
@@ -94,7 +94,7 @@ fn test_execute_trades(
     )
 }
 
-fn main() {
+pub fn run() {
     let initial_balance = 100.0;
     let params = GridParams::default();
     let mut ohlc_collection = vec![];
