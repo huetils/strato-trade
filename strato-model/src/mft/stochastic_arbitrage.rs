@@ -8,34 +8,58 @@ use good_lp::SolverModel;
 use statrs::distribution::ContinuousCDF;
 use statrs::distribution::Normal;
 
-// Define option data structure
+/// OptionData represents the characteristics of an option (call or put).
+///
+/// # Fields
+///
+/// - `name`: The name of the option (e.g., "Call1").
+/// - `s`: Underlying asset price.
+/// - `k`: Strike price.
+/// - `t`: Time to maturity (in years).
+/// - `r`: Risk-free interest rate.
+/// - `sigma`: Volatility of the asset.
+/// - `option_type`: Type of the option ("call" or "put").
+/// - `market_price`: The current market price of the option.
 #[derive(Clone, Debug, Default)]
 pub struct OptionData {
     pub name: String,
-    /// Underlying asset price
     pub s: f64,
-    /// Strike price
     pub k: f64,
-    /// Time to maturity (in years)
     pub t: f64,
-    /// Risk-free rate
     pub r: f64,
-    /// Volatility
     pub sigma: f64,
-    /// Option type (call or put)
     pub option_type: String,
-    /// Current market price
     pub market_price: f64,
 }
 
+/// Portfolio holds the result of the constructed portfolio after optimization.
+///
+/// # Fields
+///
+/// - `holdings`: A vector of tuples containing the option name and its
+///   corresponding position size.
 pub struct Portfolio {
-    /// Portfolio holdings (option name, position size)
     pub holdings: Vec<(String, f64)>,
 }
 
-// Black-Scholes pricing model
+/// Black-Scholes pricing model for calculating the theoretical price of an
+/// option.
+///
+/// # Parameters
+///
+/// - `s`: Current price of the underlying asset.
+/// - `k`: Strike price of the option.
+/// - `t`: Time to expiration (in years).
+/// - `r`: Risk-free interest rate.
+/// - `sigma`: Volatility of the underlying asset.
+/// - `option_type`: Type of the option ("call" or "put").
+///
+/// # Returns
+///
+/// - Returns the theoretical price of the option based on the Black-Scholes
+///   model.
 fn black_scholes_price(s: f64, k: f64, t: f64, r: f64, sigma: f64, option_type: &str) -> f64 {
-    let norm = Normal::new(0.0, 1.0).unwrap(); // No need for Univariate trait
+    let norm = Normal::new(0.0, 1.0).unwrap();
     let d1 = (f64::ln(s / k) + (r + 0.5 * sigma * sigma) * t) / (sigma * t.sqrt());
     let d2 = d1 - sigma * t.sqrt();
 
@@ -46,173 +70,44 @@ fn black_scholes_price(s: f64, k: f64, t: f64, r: f64, sigma: f64, option_type: 
     }
 }
 
-/// Implements a linear programming model for arbitrage detection in options trading, including short-selling.
+/// Solves a linear programming model for arbitrage detection in options
+/// trading, incorporating short-selling and stochastic dominance constraints
+/// (SSD).
 ///
 /// # Overview
 ///
-/// This function solves the following optimization problem to maximize arbitrage profit from options mispricing:
+/// This function solves the optimization problem:
 ///
 /// **Objective Function**:
-///
-/// Maximize:
+/// Maximize the arbitrage profit:
 /// ∑(i=1 to n) ((pᵢ - cᵢ) × wᵢ)
 ///
-/// **Subject to Constraints**:
+/// **Constraints**:
 ///
-/// - **Position Bounds**:
-///   -C ≤ wᵢ ≤ C, for all i ∈ {1, 2, ..., n}
-///
-/// - **Capital Constraint**:
-///   ∑(i=1 to n) wᵢ ≤ C
-///
-/// - **Liquidity Constraints**:
-///   wᵢ ≤ Lᵢ, for all i ∈ {1, 2, ..., n}
-///
-/// # Notation
-///
-/// - n: Number of assets (options).
-/// - wᵢ: Position size for asset i (number of contracts), which can be positive (long) or negative (short).
-/// - pᵢ: Mispricing of asset i (theoretical price minus market price).
-/// - cᵢ: Transaction cost for trading asset i.
-/// - C: Total capital available for trading.
-/// - Lᵢ: Liquidity limit for asset i.
+/// - **Position Bounds**: -C ≤ wᵢ ≤ C, for all i (C is the available capital).
+/// - **Capital Constraint**: ∑(i=1 to n) wᵢ ≤ C.
+/// - **Liquidity Constraints**: wᵢ ≤ Lᵢ, for all i (Lᵢ is the liquidity limit
+///   for each option).
+/// - **Stochastic Dominance Constraints**: The portfolio is constrained to
+///   stochastically dominate the index returns at various risk levels.
 ///
 /// # Parameters
 ///
-/// - `prices`: `Vec<f64>`
-///   - A vector containing the mispricing (pᵢ) for each asset.
-///   - **Mispricing Calculation**: pᵢ = Theoretical Priceᵢ - Market Priceᵢ.
-///
-/// - `transaction_costs`: `Vec<f64>`
-///   - A vector containing the transaction costs (cᵢ) for each asset.
-///   - Represents costs such as fees, commissions, or slippage.
-///
-/// - `capital`: `f64`
-///   - The total capital (C) available for constructing the portfolio.
-///   - Limits the total amount invested across all positions.
-///
-/// - `liquidity`: `Vec<f64>`
-///   - A vector containing the liquidity limits (Lᵢ) for each asset.
-///   - Ensures that the position size does not exceed market liquidity.
+/// - `prices`: A vector of mispricing values (theoretical price - market price)
+///   for each option.
+/// - `transaction_costs`: A vector of transaction costs for each option.
+/// - `capital`: The total capital available for constructing the portfolio.
+/// - `liquidity`: A vector of liquidity limits for each option.
+/// - `index_returns`: A vector of index returns used for applying SSD
+///   constraints.
+/// - `risk_levels`: A slice of risk levels for which the SSD constraints are
+///   applied.
 ///
 /// # Returns
 ///
-/// - `Vec<f64>`
-///   - A vector of optimal position sizes (wᵢ) for each asset.
-///   - Positive values indicate **long positions** (buying options).
-///   - Negative values indicate **short positions** (selling/writing options).
-///
-/// # Function Workflow
-///
-/// 1. **Variable Definition**:
-///    - Decision variables wᵢ are created for each asset, representing the position sizes.
-///    - Bounds are set to allow both long and short positions: -C ≤ wᵢ ≤ C.
-///
-/// 2. **Objective Function Setup**:
-///    - The objective is to maximize total arbitrage profit:
-///      Profit = ∑(i=1 to n) ((pᵢ - cᵢ) × wᵢ)
-///
-/// 3. **Constraints Addition**:
-///    - **Capital Constraint**:
-///      - Total invested capital should not exceed available capital:
-///        ∑(i=1 to n) wᵢ ≤ C
-///
-///    - **Liquidity Constraints**:
-///      - Position sizes should not exceed liquidity limits:
-///        wᵢ ≤ Lᵢ, for all i
-///
-/// 4. **Problem Solving**:
-///    - The linear programming problem is solved using an appropriate solver.
-///    - Optimal position sizes wᵢ are obtained.
-///
-/// # Example Usage
-///
-/// ```rust
-/// use your_crate::find_arbitrage;
-///
-/// // Mispricing for each asset (theoretical price - market price)
-/// let prices = vec![2.5, -1.0, 0.5];
-///
-/// // Transaction costs for each asset
-/// let transaction_costs = vec![0.05, 0.05, 0.05];
-///
-/// // Total capital available
-/// let capital = 10000.0;
-///
-/// // Liquidity limits for each asset
-/// let liquidity = vec![100.0, 150.0, 80.0];
-///
-/// // Find optimal arbitrage positions
-/// let weights = find_arbitrage(prices, transaction_costs, capital, liquidity);
-///
-/// // Display the results
-/// for (i, weight) in weights.iter().enumerate() {
-///     println!("Asset {}: Position Size = {:.2}", i + 1, weight);
-/// }
-/// ```
-///
-/// # Notes
-///
-/// - **Short Positions**:
-///   - Negative position sizes indicate that the strategy involves selling or writing options.
-///   - Useful when an option is overpriced compared to its theoretical value.
-///
-/// - **Long Positions**:
-///   - Positive position sizes indicate buying options.
-///   - Useful when an option is underpriced.
-///
-/// - **Transaction Costs**:
-///   - Incorporating transaction costs ensures that the strategy accounts for real-world trading expenses.
-///
-/// - **Solver Assumptions**:
-///   - The function assumes that the solver can find an optimal solution.
-///   - If the solver fails, the function may panic or return an error.
-///
-/// # Mathematical Concepts
-///
-/// - **Linear Programming**:
-///   - A method to achieve the best outcome in a mathematical model whose requirements are represented by linear relationships.
-///   - In this context, it's used to maximize profit while satisfying constraints.
-///
-/// - **Arbitrage Opportunity**:
-///   - Occurs when there is a price difference between the theoretical value and the market price of an option.
-///   - The strategy exploits these differences to make risk-free profits.
-///
-/// # Implementation Details
-///
-/// - **Decision Variables**:
-///   - Represented by the `weights` vector.
-///   - Created dynamically to accommodate any number of assets.
-///
-/// - **Objective Function**:
-///   - Implemented as an `Expression` that the solver can interpret.
-///
-/// - **Constraints**:
-///   - Capital and liquidity constraints ensure practical feasibility.
-///
-/// # Limitations
-///
-/// - **Market Impact**:
-///   - The model does not account for the potential market impact of large trades.
-///
-/// - **Risk Factors**:
-///   - Assumes that prices will move towards their theoretical values.
-///   - Does not account for market volatility or unexpected events.
-///
-/// # References
-///
-/// - **Black-Scholes Model**:
-///   - Used to compute theoretical option prices (see `black_scholes_price` function).
-///
-/// - **Linear Programming Solvers**:
-///   - The `good_lp` crate is used for formulating and solving the linear programming problem.
-///
-/// # See Also
-///
-/// - `construct_portfolio`: Uses this function to build an optimal portfolio based on current market data.
-///
-/// # Function Definition
-///
+/// - Returns a vector of optimal position sizes for each option, where positive
+///   values indicate long positions and negative values indicate short
+///   positions.
 pub fn find_arbitrage(
     prices: Vec<f64>,
     transaction_costs: Vec<f64>,
@@ -221,57 +116,33 @@ pub fn find_arbitrage(
     index_returns: Vec<f64>,
     risk_levels: &[f64],
 ) -> Vec<f64> {
-    let num_assets = prices.len(); // The number of options (assets) we are optimizing over.
+    let num_assets = prices.len(); // The number of options/assets we are optimizing over.
 
-    // Create a new problem variable instance
+    // Initialize decision variables (weights for each option)
     let mut vars = ProblemVariables::new();
-
-    // Define the decision variables (weights for each option) dynamically with bounds.
-    // Each `weight[i]` represents how much of option `i` to buy (positive) or sell (negative).
-    // The bounds `min(-capital)` and `max(capital)` ensure the position sizes do not exceed available capital,
-    // and they allow both long (positive) and short (negative) positions.
     let weights: Vec<_> = (0..num_assets)
-        .map(|_i| vars.add(variable().min(-capital).max(capital))) // Allow short (-capital) and long (+capital) positions
+        // Allow both long and short positions.
+        .map(|_i| vars.add(variable().min(-capital).max(capital)))
         .collect();
 
-    // Set up the objective function for maximizing arbitrage profit.
-    // This maps over the `num_assets`, representing each option.
-    // The formula here corresponds to the mathematical objective function:
-    //
-    // Maximize:
-    // ∑(i=1 to n) ((pᵢ - cᵢ) × wᵢ)
-    //
-    // Explanation:
-    // - `prices[i]` represents the mispricing (pᵢ) of asset `i`, calculated as (theoretical price - market price).
-    // - `transaction_costs[i]` represents the cost (cᵢ) of trading asset `i` (e.g., fees, slippage).
-    // - `weights[i]` represents the position size (wᵢ) for asset `i`, i.e., how much of this asset to buy/sell.
-    //
-    // The expression `-(prices[i] - transaction_costs[i]) * weights[i]` captures the total profit for each option:
-    // - If `prices[i] > transaction_costs[i]` (underpriced), a long position (positive weight) is profitable.
-    // - If `prices[i] < transaction_costs[i]` (overpriced), a short position (negative weight) is profitable.
-    //
-    // We use the sum across all assets to aggregate the total profit.
+    // Objective Function: Maximize arbitrage profit
     let objective: Expression = (0..num_assets)
+        // Profit per option: (mispricing - cost) * position size
         .map(|i| -(prices[i] - transaction_costs[i]) * weights[i])
-        .sum(); // Summing over all `i` (each asset) to get the total profit across all positions.
+        .sum(); // Total profit across all options
 
-    // Create the linear programming problem.
-    // The solver will maximize the objective function defined above, which seeks to maximize arbitrage profit.
+    // Setup the linear programming problem
     let mut problem = vars.maximise(objective).using(default_solver);
 
-    // Add a capital constraint:
-    // The total capital invested (sum of weights) should not exceed the available capital (C).
-    // This corresponds to the constraint: ∑(i=1 to n) wᵢ ≤ C
+    // Add capital constraint: ∑wᵢ ≤ C
     problem = problem.with(constraint!(weights.iter().sum::<Expression>() <= capital));
 
-    // Add individual liquidity constraints:
-    // Each position size (wᵢ) should not exceed the available liquidity for that option (Lᵢ).
-    // This ensures the positions respect market liquidity constraints.
+    // Add liquidity constraints: wᵢ ≤ Lᵢ for all i
     for i in 0..num_assets {
         problem = problem.with(constraint!(weights[i] <= liquidity[i]));
     }
 
-    // Convert weights from `Vec<Variable>` to `Vec<Expression>`
+    // Convert weights from `Vec<Variable>` to `Vec<Expression>` for SSD
     let weight_expressions: Vec<Expression> = weights.iter().map(|&w| w.into()).collect();
 
     // Add stochastic dominance constraints (SSD)
@@ -282,17 +153,25 @@ pub fn find_arbitrage(
         risk_levels,
     );
 
-    // Solve the problem:
-    // The solver will find the optimal weights (wᵢ) that maximize the arbitrage profit while satisfying
-    // the capital and liquidity constraints.
+    // Solve the linear programming problem
     let solution = problem.solve().unwrap();
 
-    // Retrieve the optimal weights (position sizes) for each asset.
-    // The `solution.value(var)` extracts the optimal position size for each option (wᵢ).
+    // Return the optimal weights (position sizes) for each asset
     weights.iter().map(|&var| solution.value(var)).collect()
 }
 
-// Add stochastic dominance constraints (SSD)
+/// Adds stochastic dominance constraints (SSD) to the optimization problem.
+///
+/// This ensures that the portfolio stochastically dominates the index returns
+/// at the specified risk levels.
+///
+/// # Parameters
+///
+/// - `problem`: The linear programming problem.
+/// - `portfolio_payoffs`: A slice of the portfolio's payoff expressions.
+/// - `index_payoffs`: A slice of the index payoffs (e.g., returns).
+/// - `risk_levels`: A slice of risk levels at which the dominance constraint is
+///   applied.
 fn add_stochastic_dominance_constraints(
     problem: &mut (impl SolverModel + Clone),
     portfolio_payoffs: &[Expression],
@@ -301,13 +180,14 @@ fn add_stochastic_dominance_constraints(
 ) {
     let num_assets = portfolio_payoffs.len();
 
+    // Iterate through each risk level and apply SSD constraints
     for &risk_level in risk_levels {
         for i in 0..num_assets {
-            // Create constraints for different levels of risk aversion
+            // Adjust portfolio and index payoffs based on the risk level
             let portfolio_risk_adjusted = portfolio_payoffs[i].clone() * risk_level;
             let index_risk_adjusted = index_payoffs[i] * risk_level;
 
-            // Ensure the portfolio payoff dominates the index payoff at this risk level
+            // Add a constraint: portfolio_payoff >= index_payoff at this risk level
             problem
                 .clone()
                 .with(constraint!(portfolio_risk_adjusted >= index_risk_adjusted));
@@ -315,17 +195,32 @@ fn add_stochastic_dominance_constraints(
     }
 }
 
-/// Portfolio construction function
-/// This is only intended for demonstration purposes and should not be used in production
+/// Constructs an optimal portfolio by finding the best positions in a set of
+/// options.
+///
+/// # Parameters
+///
+/// - `option_data`: A vector of OptionData objects representing the options
+///   available for the portfolio.
+/// - `capital`: The total capital available for constructing the portfolio.
+/// - `risk_levels`: A slice of risk levels for stochastic dominance
+///   constraints.
+/// - `index_returns`: A vector of index returns used for applying SSD
+///   constraints.
+///
+/// # Returns
+///
+/// - Returns a Portfolio object that contains the option holdings and their
+///   respective positions.
 pub fn construct_portfolio(
     option_data: Vec<OptionData>,
     capital: f64,
     risk_levels: &[f64],
     index_returns: Vec<f64>, // Pass real or simulated index returns as input
+    transaction_costs: Vec<f64>,
+    liquidity: Vec<f64>,
 ) -> Portfolio {
     let mut prices: Vec<f64> = Vec::new();
-    let transaction_costs: Vec<f64> = vec![0.01; option_data.len()]; // Simulate transaction costs
-    let liquidity: Vec<f64> = vec![100.0; option_data.len()]; // Simulate liquidity limits
 
     // Calculate theoretical prices and mispricing for each option
     for option in &option_data {
@@ -351,7 +246,7 @@ pub fn construct_portfolio(
         risk_levels,   // Pass the input risk levels to find_arbitrage
     );
 
-    // Create portfolio holdings
+    // Create portfolio holdings: map each option to its corresponding position size
     let holdings = option_data
         .iter()
         .zip(portfolio_weights.iter())

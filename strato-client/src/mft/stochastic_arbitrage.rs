@@ -29,7 +29,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let risk_levels = &[0.01, 0.1, 0.5, 1.0, 2.0];
 
     // Simulated or historical index returns
-    let index_returns = vec![1.5, 0.5, 0.2]; // Example data, replace with real data
+    let index_returns = vec![1.5, 0.5, 0.2];
+
+    // Simulate transaction costs
+    let transaction_costs: Vec<f64> = vec![0.01; option_data.len()];
+    // Simulate liquidity limits
+    let liquidity: Vec<f64> = vec![100.0; option_data.len()];
 
     // Construct the portfolio
     let portfolio = strato_model::mft::stochastic_arbitrage::construct_portfolio(
@@ -37,6 +42,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         capital,
         risk_levels,
         index_returns,
+        transaction_costs,
+        liquidity,
     );
 
     // Display portfolio holdings
