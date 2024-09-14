@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 strato-utils = { path = "../strato-utils" }
-barter-data= { git = "ssh://git@github.com/jabratech/barter-data-rs.git" }
-barter-integration = "0.5.3"
+barter-data = { git = "ssh://git@github.com/jabratech/barter-data-rs.git" }
+barter-integration = "0.7.3"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 tokio = "1.39.0"
