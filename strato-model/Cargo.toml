@@ -13,3 +13,5 @@ tokio = "1.39.0"
 chrono = "0.4.38"
 hftbacktest = { git = "https://github.com/nkaz001/hftbacktest.git" }
 anyhow = "1.0.86"
+good_lp = "1.8.1"
+statrs = "0.17.1"
