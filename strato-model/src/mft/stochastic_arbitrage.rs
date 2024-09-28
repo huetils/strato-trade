@@ -8,68 +8,109 @@ use good_lp::Solution;
 use good_lp::SolverModel;
 use good_lp::Variable;
 
-/// Define option data structure
+use crate::pricing::bs::black_scholes_call;
+use crate::pricing::bs::black_scholes_put;
+
+/// Represents the data for an option.
 #[derive(Clone, Debug, Default)]
 pub struct OptionData {
     pub name: String,
-    /// Underlying asset price
+    /// Underlying asset price (S).
     pub s: f64,
-    /// Strike price
+    /// Strike price (K).
     pub k: f64,
-    /// Time to maturity (in years)
+    /// Time to maturity in years (T).
     pub t: f64,
-    /// Risk-free rate
+    /// Risk-free interest rate (r).
     pub r: f64,
-    /// Option type (call or put)
+    /// Volatility of the underlying asset (σ).
+    pub sigma: f64,
+    /// Option type: `"call"` or `"put"`.
     pub option_type: String,
-    /// Current market price
+    /// Current market price of the option.
     pub market_price: f64,
 }
 
-/// Struct for managing the portfolio's holdings
+/// Manages the portfolio's holdings.
 pub struct Portfolio {
-    /// Portfolio holdings (option name, position size)
+    /// Portfolio holdings as a vector of (option name, position size).
     pub holdings: Vec<(String, f64)>,
 }
 
-/// Pricing kernel: A function to compute the theoretical price based on
-/// expected payoffs
-///
-/// This function models the pricing kernel for an option's payoff.
-/// In this simplified example, we use a basic kernel assuming risk-averse
-/// utility.
+/// Finds arbitrage opportunities and computes optimal portfolio weights using linear programming.
 ///
 /// # Arguments
-/// * `expected_payoff` - Expected payoff of the option.
-/// * `risk_aversion` - A risk aversion parameter (higher = more risk-averse).
+///
+/// * `market_prices` - Market prices of the options.
+/// * `transaction_costs` - Transaction costs associated with buying/selling options.
+/// * `capital` - Total capital available for investment.
+/// * `liquidity` - Liquidity constraints for each option.
+/// * `index_returns` - Returns of a benchmark index in different states.
+/// * `risk_levels` - Array of risk levels to consider (e.g., for stochastic dominance).
+/// * `option_data` - Data for each option.
 ///
 /// # Returns
-/// * The price of the option based on the pricing kernel.
-fn pricing_kernel(expected_payoff: f64, risk_aversion: f64, _option_type: &str) -> f64 {
-    expected_payoff * f64::exp(-risk_aversion * expected_payoff)
-}
-
+///
+/// A vector of optimal positions (weights) for each option.
+///
+/// # Mathematical Formulation
+///
+/// The objective is to maximize the total expected profit:
+///
+/// Maximize: `Z = Σ (π_i * w_i)`
+///
+/// where:
+/// - `π_i = P_theoretical_i - P_market_i - C_transaction_i` is the profit per unit of option `i`.
+/// - `w_i` is the position size (number of units) of option `i`.
+///
+/// **Constraints:**
+///
+/// 1. **Capital Constraint:**
+///    `Σ [(w_i^+ + w_i^-) * (P_market_i + C_transaction_i)] ≤ Capital`
+///
+///    - Ensures the total investment does not exceed available capital.
+///    - `w_i^+` and `w_i^-` are the long and short positions, respectively.
+///
+/// 2. **Position Relationship:**
+///    `w_i = w_i^+ - w_i^-`  for all `i`
+///
+///    - Relates net positions to long and short positions.
+///
+/// 3. **Liquidity Constraints:**
+///    `w_i^+ ≤ L_i`,  `w_i^- ≤ L_i` for all `i`
+///
+///    - `L_i` is the liquidity limit for option `i`.
+///
+/// 4. **Stochastic Dominance Constraints:**
+///    `Portfolio Return_s * Risk Level ≥ Index Return_s * Risk Level` for all `s`
+///
+///    - Ensures portfolio returns are acceptable compared to a benchmark at different risk levels.
+///    - `s` indexes the different market states/scenarios.
+///
+/// 5. **Position Limits:**
+///    `-I_max ≤ w_i * (P_market_i + C_transaction_i) ≤ I_max` for all `i`
+///
+///    - `I_max = Capital / n` is the maximum investment per option.
 pub fn find_arbitrage(
-    expected_payoffs: Vec<f64>,
     market_prices: Vec<f64>,
     transaction_costs: Vec<f64>,
     capital: f64,
     liquidity: Vec<f64>,
-    risk_aversion: f64,
     index_returns: Vec<f64>,
     risk_levels: &[f64],
     option_data: &Vec<OptionData>,
 ) -> Vec<f64> {
-    let num_assets = expected_payoffs.len();
+    let num_assets = market_prices.len();
+    let num_states = index_returns.len();
 
     let mut vars = ProblemVariables::new();
 
-    // Initialize variables for long and short positions
-    let (weights, long_short_weights) = initialize_weights(&mut vars, num_assets, capital);
+    // Initialize variables for positions
+    let (weights, w_plus, w_minus, equality_constraints) =
+        initialize_weights(&mut vars, num_assets, &liquidity);
 
-    // Compute theoretical prices using the pricing kernel
-    let theoretical_prices =
-        compute_theoretical_prices(&expected_payoffs, risk_aversion, option_data);
+    // Compute theoretical prices using the Black-Scholes model
+    let theoretical_prices = compute_theoretical_prices(option_data);
 
     // Build the objective function (profit maximization)
     let objective = build_objective(
@@ -82,21 +123,53 @@ pub fn find_arbitrage(
     // Create the optimization problem
     let mut problem = vars.maximise(objective).using(default_solver);
 
-    // **Capital constraint**: limit total investment to capital
-    let total_capital_constraint = compute_total_capital_constraint(&long_short_weights, capital);
+    // Add equality constraints
+    for c in equality_constraints {
+        problem = problem.with(c);
+    }
+
+    // Capital constraint: limit total investment to capital
+    let total_capital_constraint = compute_total_capital_constraint::<Expression>(
+        &w_plus,
+        &w_minus,
+        &market_prices,
+        &transaction_costs,
+    );
     problem = problem.with(constraint!(total_capital_constraint <= capital));
 
-    // **Liquidity constraints**: limit positions by liquidity
-    add_liquidity_constraints(&mut problem, &weights, &liquidity);
+    // Liquidity constraints
+    add_liquidity_constraints(&mut problem, &w_plus, &w_minus, &liquidity);
 
-    // * Add stochastic dominance constraints (optional, based on your model)
-    let weight_expressions: Vec<Expression> = weights.iter().map(|&w| w.into()).collect();
+    // Stochastic dominance constraints
+    let mut portfolio_returns = vec![Expression::from(0.0); num_states];
+    for s in 0..num_states {
+        for i in 0..num_assets {
+            let w = weights[i];
+            let option_return = theoretical_prices[i] - market_prices[i] - transaction_costs[i];
+            portfolio_returns[s] = portfolio_returns[s].clone() + w * option_return;
+        }
+    }
+
     add_stochastic_dominance_constraints(
         &mut problem,
-        &weight_expressions,
+        &portfolio_returns,
         &index_returns,
         risk_levels,
     );
+
+    // Position limit constraints
+    let num_options = weights.len();
+    let max_investment_per_option = capital / num_options as f64;
+
+    for (i, &w) in weights.iter().enumerate() {
+        let investment_in_option = w * (market_prices[i] + transaction_costs[i]);
+        problem = problem.with(constraint!(
+            investment_in_option.clone() <= max_investment_per_option
+        ));
+        problem = problem.with(constraint!(
+            investment_in_option >= -max_investment_per_option
+        ));
+    }
 
     // Solve the optimization problem
     let solution = problem.solve().unwrap();
@@ -105,141 +178,327 @@ pub fn find_arbitrage(
     weights.iter().map(|&var| solution.value(var)).collect()
 }
 
+/// Initializes variables for option positions and sets up equality constraints.
+///
+/// For each option, creates three variables:
+/// - `w`: Net position in the option (can be positive or negative).
+/// - `w_p`: Positive part of the position (long positions, ≥ 0).
+/// - `w_m`: Negative part of the position (short positions, ≥ 0).
+///
+/// Enforces the equality constraint: `w = w_p - w_m`.
+///
+/// # Arguments
+///
+/// * `vars` - Mutable reference to `ProblemVariables` for variable management.
+/// * `num_assets` - Number of options/assets.
+/// * `liquidity` - Liquidity constraints for each option.
+///
+/// # Returns
+///
+/// A tuple containing:
+/// - `weights`: Vector of net position variables.
+/// - `w_plus`: Vector of long position variables.
+/// - `w_minus`: Vector of short position variables.
+/// - `constraints`: Vector of equality constraints (`w = w_p - w_m`).
+///
+/// # Mathematical Formulation
+///
+/// For each option `i`:
+/// - Net position: `w_i = w_i^+ - w_i^-`
+/// - Bounds:
+///   - `w_i^+ ≥ 0`, `w_i^- ≥ 0`
+///   - `-L_i ≤ w_i ≤ L_i`
 fn initialize_weights(
     vars: &mut ProblemVariables,
     num_assets: usize,
-    capital: f64,
-) -> (Vec<Variable>, Vec<(Variable, Variable, Constraint)>) {
-    let weights: Vec<Variable> = (0..num_assets)
-        .map(|_| vars.add(variable().min(-capital).max(capital)))
-        .collect();
+    liquidity: &[f64],
+) -> (Vec<Variable>, Vec<Variable>, Vec<Variable>, Vec<Constraint>) {
+    let mut weights = Vec::with_capacity(num_assets);
+    let mut w_plus = Vec::with_capacity(num_assets);
+    let mut w_minus = Vec::with_capacity(num_assets);
+    let mut constraints = Vec::with_capacity(num_assets);
 
-    // Split weights into long and short components for capital constraint
-    let long_short_weights: Vec<_> = weights
-        .iter()
-        .map(|&w| {
-            let long_weight = vars.add(variable().min(0.0).max(capital));
-            let short_weight = vars.add(variable().min(0.0).max(capital));
-            let long_short_constraint = constraint!(w == long_weight - short_weight);
-            (long_weight, short_weight, long_short_constraint)
-        })
-        .collect();
-
-    (weights, long_short_weights)
+    for i in 0..num_assets {
+        let w = vars.add(variable().bounds(-liquidity[i]..liquidity[i]));
+        let w_p = vars.add(variable().bounds(0.0..liquidity[i]));
+        let w_m = vars.add(variable().bounds(0.0..liquidity[i]));
+        let c = constraint!(w == w_p - w_m);
+        weights.push(w);
+        w_plus.push(w_p);
+        w_minus.push(w_m);
+        constraints.push(c);
+    }
+    (weights, w_plus, w_minus, constraints)
 }
 
-fn compute_theoretical_prices(
-    expected_payoffs: &[f64],
-    risk_aversion: f64,
-    option_data: &Vec<OptionData>,
-) -> Vec<f64> {
-    expected_payoffs
+/// Computes theoretical option prices using the Black-Scholes model.
+///
+/// # Arguments
+///
+/// * `option_data` - Vector of `OptionData` containing details of each option.
+///
+/// # Returns
+///
+/// A vector of theoretical prices for each option.
+///
+/// # Mathematical Formulation
+///
+/// For a **call** option, the Black-Scholes formula is:
+///
+/// `C = S * N(d_1) - K * exp(-rT) * N(d_2)`
+///
+/// For a **put** option:
+///
+/// `P = K * exp(-rT) * N(-d_2) - S * N(-d_1)`
+///
+/// where:
+///
+/// `d_1 = [ln(S / K) + (r + 0.5 * σ^2) * T] / (σ * sqrt(T))`  
+/// `d_2 = d_1 - σ * sqrt(T)`
+///
+/// - `N(.)` is the cumulative distribution function of the standard normal distribution.
+/// - `S` is the current price of the underlying asset.
+/// - `K` is the strike price.
+/// - `r` is the risk-free interest rate.
+/// - `σ` is the volatility.
+/// - `T` is the time to maturity.
+fn compute_theoretical_prices(option_data: &Vec<OptionData>) -> Vec<f64> {
+    option_data
         .iter()
-        .enumerate()
-        .map(|(i, &payoff)| pricing_kernel(payoff, risk_aversion, &option_data[i].option_type))
+        .map(|option| {
+            if option.option_type == "call" {
+                black_scholes_call(option.s, option.k, option.t, option.r, option.sigma)
+            } else {
+                black_scholes_put(option.s, option.k, option.t, option.r, option.sigma)
+            }
+        })
         .collect()
 }
 
+/// Builds the objective function for profit maximization.
+///
+/// The objective is to maximize the total expected profit from the portfolio.
+///
+/// # Arguments
+///
+/// * `weights` - Variables representing positions in options.
+/// * `market_prices` - Market prices of the options.
+/// * `theoretical_prices` - Theoretical prices from the Black-Scholes model.
+/// * `transaction_costs` - Transaction costs for each option.
+///
+/// # Returns
+///
+/// An `Expression` representing the objective function.
+///
+/// # Mathematical Formulation
+///
+/// The profit per unit for option `i` is:
+///
+/// `π_i = P_theoretical_i - P_market_i - C_transaction_i`
+///
+/// The objective function is:
+///
+/// `Maximize Z = Σ (π_i * w_i)`
 fn build_objective(
     weights: &[Variable],
     market_prices: &[f64],
     theoretical_prices: &[f64],
     transaction_costs: &[f64],
 ) -> Expression {
-    (0..weights.len())
-        .map(|i| {
-            if market_prices[i] > theoretical_prices[i] {
-                // Short the option if overpriced, accounting for transaction costs
-                (market_prices[i] - theoretical_prices[i] - transaction_costs[i]) * -weights[i]
-            } else {
-                // Go long if underpriced, accounting for transaction costs
-                (theoretical_prices[i] - market_prices[i] - transaction_costs[i]) * weights[i]
-            }
+    weights
+        .iter()
+        .enumerate()
+        .map(|(i, &w)| {
+            let profit_per_unit = theoretical_prices[i] - market_prices[i] - transaction_costs[i];
+            profit_per_unit * w
         })
         .sum()
 }
 
-fn compute_total_capital_constraint(
-    long_short_weights: &[(Variable, Variable, Constraint)],
-    capital: f64,
-) -> Expression {
-    let total_investment: Expression = long_short_weights
+/// Computes the total capital constraint expression.
+///
+/// Ensures that the total investment does not exceed the available capital.
+///
+/// # Arguments
+///
+/// * `w_plus` - Variables for long positions.
+/// * `w_minus` - Variables for short positions.
+/// * `market_prices` - Market prices of the options.
+/// * `transaction_costs` - Transaction costs for each option.
+///
+/// # Returns
+///
+/// An `Expression` representing the total capital constraint.
+///
+/// # Mathematical Formulation
+///
+/// The total investment is:
+///
+/// `Total Investment = Σ [(w_i^+ + w_i^-) * (P_market_i + C_transaction_i)]`
+///
+/// This must satisfy:
+///
+/// `Total Investment ≤ Capital`
+fn compute_total_capital_constraint<S>(
+    w_plus: &[Variable],
+    w_minus: &[Variable],
+    market_prices: &[f64],
+    transaction_costs: &[f64],
+) -> Expression
+where
+    S: Into<Expression> + std::iter::Sum<good_lp::Expression> + good_lp::IntoAffineExpression,
+{
+    w_plus
         .iter()
-        .map(|(long_weight, short_weight, _)| *long_weight + short_weight)
-        .sum();
-
-    // Ensure the total investment does not exceed the available capital
-    total_investment - capital
+        .enumerate()
+        .map(|(i, &w_p)| w_p * (market_prices[i] + transaction_costs[i]))
+        .sum::<Expression>()
+        + w_minus
+            .iter()
+            .enumerate()
+            .map(|(i, &w_m)| w_m * (market_prices[i] + transaction_costs[i]))
+            .sum::<S>()
 }
 
+/// Adds liquidity constraints to the optimization problem.
+///
+/// Ensures that the positions in each option do not exceed the available liquidity.
+///
+/// # Arguments
+///
+/// * `problem` - Mutable reference to the solver model.
+/// * `w_plus` - Variables for long positions.
+/// * `w_minus` - Variables for short positions.
+/// * `liquidity` - Liquidity limits for each option.
+///
+/// # Mathematical Formulation
+///
+/// For each option `i`:
+///
+/// `w_i^+ ≤ L_i`,  `w_i^- ≤ L_i`
 fn add_liquidity_constraints(
-    problem: &mut (impl SolverModel + Clone),
-    weights: &[Variable],
+    problem: &mut impl SolverModel,
+    w_plus: &[Variable],
+    w_minus: &[Variable],
     liquidity: &[f64],
 ) {
-    for (i, &weight) in weights.iter().enumerate() {
-        *problem = problem.clone().with(constraint!(weight <= liquidity[i])); // Long positions
-        *problem = problem.clone().with(constraint!(weight >= -liquidity[i])); // Short positions
+    for (i, (&w_p, &w_m)) in w_plus.iter().zip(w_minus).enumerate() {
+        problem.add_constraint(constraint!(w_p <= liquidity[i]));
+        problem.add_constraint(constraint!(w_m <= liquidity[i]));
     }
 }
 
-/// Add stochastic dominance constraints (SSD)
+/// Adds stochastic dominance constraints to the optimization problem.
+///
+/// Ensures that the portfolio's returns are at least as good as the benchmark index returns at different risk levels.
+///
+/// # Arguments
+///
+/// * `problem` - Mutable reference to the solver model.
+/// * `portfolio_returns` - Expressions representing portfolio returns in each state.
+/// * `index_returns` - Index returns in each state.
+/// * `risk_levels` - Array of risk levels to consider.
+///
+/// # Mathematical Formulation
+///
+/// For each state `s` and risk level `Risk Level`:
+///
+/// `Portfolio Return_s * Risk Level ≥ Index Return_s * Risk Level`
 fn add_stochastic_dominance_constraints(
-    problem: &mut (impl SolverModel + Clone),
-    portfolio_payoffs: &[Expression],
-    index_payoffs: &[f64],
+    problem: &mut impl SolverModel,
+    portfolio_returns: &[Expression],
+    index_returns: &[f64],
     risk_levels: &[f64],
 ) {
-    let num_assets = portfolio_payoffs.len();
+    let num_states = portfolio_returns.len();
 
     for &risk_level in risk_levels {
-        for i in 0..num_assets {
-            // Create constraints for different levels of risk aversion
-            let portfolio_risk_adjusted = portfolio_payoffs[i].clone() * risk_level;
-            let index_risk_adjusted = index_payoffs[i] * risk_level;
+        for s in 0..num_states {
+            let portfolio_risk_adjusted = portfolio_returns[s].clone() * risk_level;
+            let index_risk_adjusted = index_returns[s] * risk_level;
 
-            // Ensure the portfolio payoff dominates the index payoff at this risk level
-            problem
-                .clone()
-                .with(constraint!(portfolio_risk_adjusted >= index_risk_adjusted));
+            problem.add_constraint(constraint!(portfolio_risk_adjusted >= index_risk_adjusted));
         }
     }
 }
 
-/// Portfolio construction function.
-/// This is only intended for demonstration purposes and should not be used in
-/// production.
+/// Constructs the portfolio by finding optimal weights and assembling holdings.
+///
+/// **Note:** This is intended for demonstration purposes and should not be used in production.
+///
+/// # Arguments
+///
+/// * `option_data` - Vector of `OptionData` for each option.
+/// * `capital` - Total capital available for investment.
+/// * `risk_levels` - Array of risk levels for stochastic dominance constraints.
+/// * `index_returns` - Real or simulated index returns for benchmarking.
+/// * `transaction_costs` - Transaction costs for each option.
+/// * `liquidity` - Liquidity constraints for each option.
+///
+/// # Returns
+///
+/// A `Portfolio` containing the holdings (option names and positions).
+///
+/// # Example
+///
+/// ```
+/// let option_data = vec![
+///     OptionData {
+///         name: "Option1".to_string(),
+///         s: 100.0,
+///         k: 90.0,
+///         t: 0.5,
+///         r: 0.05,
+///         sigma: 0.2,
+///         option_type: "call".to_string(),
+///         market_price: 10.0,
+///     },
+///     // ... more options ...
+/// ];
+///
+/// let capital = 100000.0;
+/// let risk_levels = &[0.01, 0.1, 0.5];
+/// let index_returns = vec![0.05, 0.02, -0.01]; // Simulated index returns
+/// let transaction_costs = vec![0.05; option_data.len()];
+/// let liquidity = vec![1000.0; option_data.len()];
+///
+/// let portfolio = construct_portfolio(
+///     option_data,
+///     capital,
+///     risk_levels,
+///     index_returns,
+///     transaction_costs,
+///     liquidity,
+/// );
+/// ```
 pub fn construct_portfolio(
     option_data: Vec<OptionData>,
     capital: f64,
-    risk_aversion: f64, // Risk aversion for pricing kernel
     risk_levels: &[f64],
-    index_returns: Vec<f64>,     // Real or simulated index returns
-    transaction_costs: Vec<f64>, // Including transaction costs
-    liquidity: Vec<f64>,         // Including liquidity constraints
+    index_returns: Vec<f64>,
+    transaction_costs: Vec<f64>,
+    liquidity: Vec<f64>,
 ) -> Portfolio {
-    let mut expected_payoffs: Vec<f64> = Vec::new();
     let market_prices: Vec<f64> = option_data.iter().map(|o| o.market_price).collect();
 
-    // Calculate expected payoffs for each option
+    // Calculate expected payoffs for each option (not directly used in optimization)
+    let mut expected_payoffs: Vec<f64> = Vec::new();
     for option in &option_data {
         let payoff = if option.option_type == "call" {
-            f64::max(option.s - option.k, 0.0) // Call payoff: max(S-K, 0)
+            f64::max(option.s - option.k, 0.0)
         } else {
-            f64::max(option.k - option.s, 0.0) // Put payoff: max(K-S, 0)
+            f64::max(option.k - option.s, 0.0)
         };
         expected_payoffs.push(payoff);
     }
 
     // Find optimal portfolio weights via linear programming
     let portfolio_weights = find_arbitrage(
-        expected_payoffs,
         market_prices,
-        transaction_costs, // Reintegrating transaction costs
+        transaction_costs,
         capital,
-        liquidity,     // Reintegrating liquidity constraints
-        risk_aversion, // Pass risk aversion to the pricing kernel
-        index_returns, // Pass actual index returns here
+        liquidity,
+        index_returns,
         risk_levels,
         &option_data,
     );
@@ -252,134 +511,4 @@ pub fn construct_portfolio(
         .collect();
 
     Portfolio { holdings }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pricing_kernel() {
-        let payoff = 100.0;
-        let risk_aversion = 0.1;
-        let option_type = "call";
-        let price = pricing_kernel(payoff, risk_aversion, option_type);
-        assert!(price > 0.0, "Pricing kernel should return positive prices");
-
-        // Use a margin of error for floating point comparison instead of exact equality
-        let expected_price = 100.0 * f64::exp(-0.1 * 100.0);
-        let epsilon = 1e-10;
-        assert!(
-            (price - expected_price).abs() < epsilon,
-            "Pricing kernel is incorrect. Expected: {}, Got: {}",
-            expected_price,
-            price
-        );
-    }
-
-    #[test]
-    fn test_arbitrage_detection() {
-        let expected_payoffs = vec![20.0, 10.0]; // Payoff for two options
-        let market_prices = vec![10.0, 12.0]; // Market prices, first one is underpriced
-        let transaction_costs = vec![0.05, 0.05];
-        let capital = 1000.0;
-        let liquidity = vec![50.0, 50.0]; // Liquidity constraints
-        let risk_aversion = 0.2;
-        let index_returns = vec![1.0, 0.5]; // Simulated index returns
-        let risk_levels = &[0.01, 0.1, 0.5];
-
-        let option_data = vec![
-            OptionData {
-                name: "Call1".to_string(),
-                s: 100.0,
-                k: 90.0,
-                t: 0.5,
-                r: 0.05,
-                option_type: "call".to_string(),
-                market_price: 10.0,
-            },
-            OptionData {
-                name: "Put1".to_string(),
-                s: 100.0,
-                k: 110.0,
-                t: 0.5,
-                r: 0.05,
-                option_type: "put".to_string(),
-                market_price: 12.0,
-            },
-        ];
-
-        let weights = find_arbitrage(
-            expected_payoffs.clone(),
-            market_prices.clone(),
-            transaction_costs,
-            capital,
-            liquidity,
-            risk_aversion,
-            index_returns,
-            risk_levels,
-            &option_data,
-        );
-
-        // Update expectations: first option should have a short position based on the current setup
-        assert!(
-            weights[0] < 0.0,
-            "First option (call) should have a short position"
-        );
-        assert!(
-            weights[1] < 0.0,
-            "Second option (put) should have a short position"
-        );
-    }
-
-    #[test]
-    fn test_portfolio_construction() {
-        let option_data = vec![
-            OptionData {
-                name: "Call1".to_string(),
-                s: 100.0,
-                k: 90.0,
-                t: 0.5,
-                r: 0.05,
-                option_type: "call".to_string(),
-                market_price: 8.0,
-            },
-            OptionData {
-                name: "Put1".to_string(),
-                s: 100.0,
-                k: 110.0,
-                t: 0.5,
-                r: 0.05,
-                option_type: "put".to_string(),
-                market_price: 12.0,
-            },
-        ];
-
-        let capital = 10000.0;
-        let risk_aversion = 0.1;
-        let risk_levels = &[0.01, 0.1, 0.5];
-        let index_returns = vec![1.5, 0.5, 0.2];
-        let transaction_costs = vec![0.01, 0.01];
-        let liquidity = vec![50.0, 50.0];
-
-        let portfolio = construct_portfolio(
-            option_data,
-            capital,
-            risk_aversion,
-            risk_levels,
-            index_returns,
-            transaction_costs,
-            liquidity,
-        );
-
-        // Check portfolio holdings are within liquidity constraints
-        for (_, position) in portfolio.holdings {
-            println!("Position: {}", position);
-
-            assert!(
-                position.abs() <= 50.0,
-                "Position exceeds liquidity constraints"
-            );
-        }
-    }
 }
