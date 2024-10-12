@@ -1,7 +1,6 @@
 pub mod grid;
 pub mod hft;
 pub mod mft;
-pub mod pricing;
 pub mod trend;
 
 /// Function to initialize the trading model

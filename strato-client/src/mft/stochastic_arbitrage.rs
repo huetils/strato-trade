@@ -1,6 +1,6 @@
 use rand::Rng;
-use strato_model::pricing::bs::black_scholes_call;
-use strato_model::pricing::bs::black_scholes_put;
+use strato_pricer::bs::black_scholes_call;
+use strato_pricer::bs::black_scholes_put;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Generate options using the slightly incorrect pricing model
@@ -69,7 +69,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let risk_levels = &[0.01, 0.1, 0.5];
 
     // Simulated or historical index returns (should match the number of assets)
-    let index_returns = vec![1.5, 0.5, 0.2, 1.0, 0.8, 0.7, 1.1, 0.9, 0.6, 0.4];
+    let index_returns = [1.5, 0.5, 0.2, 1.0, 0.8, 0.7, 1.1, 0.9, 0.6, 0.4];
     let index_returns = index_returns
         .iter()
         .cycle()

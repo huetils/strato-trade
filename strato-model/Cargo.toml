@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+strato-pricer = { git = "ssh://git@github.com/huetils/strato-pricer.git" }
 strato-utils = { path = "../strato-utils" }
 barter-data = { git = "ssh://git@github.com/jabratech/barter-data-rs.git" }
 barter-integration = "0.7.3"

@@ -7,9 +7,8 @@ use good_lp::ProblemVariables;
 use good_lp::Solution;
 use good_lp::SolverModel;
 use good_lp::Variable;
-
-use crate::pricing::bs::black_scholes_call;
-use crate::pricing::bs::black_scholes_put;
+use strato_pricer::bs::black_scholes_call;
+use strato_pricer::bs::black_scholes_put;
 
 /// Represents the data for an option.
 #[derive(Clone, Debug, Default)]
@@ -37,16 +36,19 @@ pub struct Portfolio {
     pub holdings: Vec<(String, f64)>,
 }
 
-/// Finds arbitrage opportunities and computes optimal portfolio weights using linear programming.
+/// Finds arbitrage opportunities and computes optimal portfolio weights using
+/// linear programming.
 ///
 /// # Arguments
 ///
 /// * `market_prices` - Market prices of the options.
-/// * `transaction_costs` - Transaction costs associated with buying/selling options.
+/// * `transaction_costs` - Transaction costs associated with buying/selling
+///   options.
 /// * `capital` - Total capital available for investment.
 /// * `liquidity` - Liquidity constraints for each option.
 /// * `index_returns` - Returns of a benchmark index in different states.
-/// * `risk_levels` - Array of risk levels to consider (e.g., for stochastic dominance).
+/// * `risk_levels` - Array of risk levels to consider (e.g., for stochastic
+///   dominance).
 /// * `option_data` - Data for each option.
 ///
 /// # Returns
@@ -60,35 +62,35 @@ pub struct Portfolio {
 /// Maximize: `Z = Σ (π_i * w_i)`
 ///
 /// where:
-/// - `π_i = P_theoretical_i - P_market_i - C_transaction_i` is the profit per unit of option `i`.
+/// - `π_i = P_theoretical_i - P_market_i - C_transaction_i` is the profit per
+///   unit of option `i`.
 /// - `w_i` is the position size (number of units) of option `i`.
 ///
 /// **Constraints:**
 ///
-/// 1. **Capital Constraint:**
-///    `Σ [(w_i^+ + w_i^-) * (P_market_i + C_transaction_i)] ≤ Capital`
+/// 1. **Capital Constraint:** `Σ [(w_i^+ + w_i^-) * (P_market_i +
+///    C_transaction_i)] ≤ Capital`
 ///
 ///    - Ensures the total investment does not exceed available capital.
 ///    - `w_i^+` and `w_i^-` are the long and short positions, respectively.
 ///
-/// 2. **Position Relationship:**
-///    `w_i = w_i^+ - w_i^-`  for all `i`
+/// 2. **Position Relationship:** `w_i = w_i^+ - w_i^-`  for all `i`
 ///
 ///    - Relates net positions to long and short positions.
 ///
-/// 3. **Liquidity Constraints:**
-///    `w_i^+ ≤ L_i`,  `w_i^- ≤ L_i` for all `i`
+/// 3. **Liquidity Constraints:** `w_i^+ ≤ L_i`,  `w_i^- ≤ L_i` for all `i`
 ///
 ///    - `L_i` is the liquidity limit for option `i`.
 ///
-/// 4. **Stochastic Dominance Constraints:**
-///    `Portfolio Return_s * Risk Level ≥ Index Return_s * Risk Level` for all `s`
+/// 4. **Stochastic Dominance Constraints:** `Portfolio Return_s * Risk Level ≥
+///    Index Return_s * Risk Level` for all `s`
 ///
-///    - Ensures portfolio returns are acceptable compared to a benchmark at different risk levels.
+///    - Ensures portfolio returns are acceptable compared to a benchmark at
+///      different risk levels.
 ///    - `s` indexes the different market states/scenarios.
 ///
-/// 5. **Position Limits:**
-///    `-I_max ≤ w_i * (P_market_i + C_transaction_i) ≤ I_max` for all `i`
+/// 5. **Position Limits:** `-I_max ≤ w_i * (P_market_i + C_transaction_i) ≤
+///    I_max` for all `i`
 ///
 ///    - `I_max = Capital / n` is the maximum investment per option.
 pub fn find_arbitrage(
@@ -98,7 +100,7 @@ pub fn find_arbitrage(
     liquidity: Vec<f64>,
     index_returns: Vec<f64>,
     risk_levels: &[f64],
-    option_data: &Vec<OptionData>,
+    option_data: &[OptionData],
 ) -> Vec<f64> {
     let num_assets = market_prices.len();
     let num_states = index_returns.len();
@@ -142,11 +144,10 @@ pub fn find_arbitrage(
 
     // Stochastic dominance constraints
     let mut portfolio_returns = vec![Expression::from(0.0); num_states];
-    for s in 0..num_states {
-        for i in 0..num_assets {
-            let w = weights[i];
+    for s in portfolio_returns.iter_mut().take(num_states) {
+        for (i, &w) in weights.iter().enumerate() {
             let option_return = theoretical_prices[i] - market_prices[i] - transaction_costs[i];
-            portfolio_returns[s] = portfolio_returns[s].clone() + w * option_return;
+            *s = s.clone() + w * option_return;
         }
     }
 
@@ -218,11 +219,12 @@ fn initialize_weights(
     let mut w_minus = Vec::with_capacity(num_assets);
     let mut constraints = Vec::with_capacity(num_assets);
 
-    for i in 0..num_assets {
-        let w = vars.add(variable().bounds(-liquidity[i]..liquidity[i]));
-        let w_p = vars.add(variable().bounds(0.0..liquidity[i]));
-        let w_m = vars.add(variable().bounds(0.0..liquidity[i]));
+    for i in liquidity.iter().take(num_assets) {
+        let w = vars.add(variable().bounds(-i..*i));
+        let w_p = vars.add(variable().bounds(0.0..*i));
+        let w_m = vars.add(variable().bounds(0.0..*i));
         let c = constraint!(w == w_p - w_m);
+
         weights.push(w);
         w_plus.push(w_p);
         w_minus.push(w_m);
@@ -256,13 +258,14 @@ fn initialize_weights(
 /// `d_1 = [ln(S / K) + (r + 0.5 * σ^2) * T] / (σ * sqrt(T))`  
 /// `d_2 = d_1 - σ * sqrt(T)`
 ///
-/// - `N(.)` is the cumulative distribution function of the standard normal distribution.
+/// - `N(.)` is the cumulative distribution function of the standard normal
+///   distribution.
 /// - `S` is the current price of the underlying asset.
 /// - `K` is the strike price.
 /// - `r` is the risk-free interest rate.
 /// - `σ` is the volatility.
 /// - `T` is the time to maturity.
-fn compute_theoretical_prices(option_data: &Vec<OptionData>) -> Vec<f64> {
+fn compute_theoretical_prices(option_data: &[OptionData]) -> Vec<f64> {
     option_data
         .iter()
         .map(|option| {
@@ -362,7 +365,8 @@ where
 
 /// Adds liquidity constraints to the optimization problem.
 ///
-/// Ensures that the positions in each option do not exceed the available liquidity.
+/// Ensures that the positions in each option do not exceed the available
+/// liquidity.
 ///
 /// # Arguments
 ///
@@ -390,12 +394,14 @@ fn add_liquidity_constraints(
 
 /// Adds stochastic dominance constraints to the optimization problem.
 ///
-/// Ensures that the portfolio's returns are at least as good as the benchmark index returns at different risk levels.
+/// Ensures that the portfolio's returns are at least as good as the benchmark
+/// index returns at different risk levels.
 ///
 /// # Arguments
 ///
 /// * `problem` - Mutable reference to the solver model.
-/// * `portfolio_returns` - Expressions representing portfolio returns in each state.
+/// * `portfolio_returns` - Expressions representing portfolio returns in each
+///   state.
 /// * `index_returns` - Index returns in each state.
 /// * `risk_levels` - Array of risk levels to consider.
 ///
@@ -424,7 +430,8 @@ fn add_stochastic_dominance_constraints(
 
 /// Constructs the portfolio by finding optimal weights and assembling holdings.
 ///
-/// **Note:** This is intended for demonstration purposes and should not be used in production.
+/// **Note:** This is intended for demonstration purposes and should not be used
+/// in production.
 ///
 /// # Arguments
 ///
@@ -481,7 +488,8 @@ pub fn construct_portfolio(
 ) -> Portfolio {
     let market_prices: Vec<f64> = option_data.iter().map(|o| o.market_price).collect();
 
-    // Calculate expected payoffs for each option (not directly used in optimization)
+    // Calculate expected payoffs for each option (not directly used in
+    // optimization)
     let mut expected_payoffs: Vec<f64> = Vec::new();
     for option in &option_data {
         let payoff = if option.option_type == "call" {

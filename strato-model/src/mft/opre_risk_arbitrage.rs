@@ -50,7 +50,7 @@ pub fn estimate_probabilities(
     let p = (f64::exp(r * dt) - d) / (u - d);
 
     // Adjust p to be between 0 and 1
-    let p = p.max(0.0).min(1.0);
+    let p = p.clamp(0.0, 1.0);
 
     let mut asset_prices = Vec::new();
     let mut probabilities = Vec::new();
@@ -94,7 +94,7 @@ pub fn find_arbitrage(
     capital: f64,
     liquidity: Vec<f64>,
     asset_prices: Vec<f64>,
-    option_data: &Vec<OptionData>,
+    option_data: &[OptionData],
 ) -> Result<Vec<f64>, String> {
     let start_time = Instant::now();
     let num_assets = market_prices.len();
@@ -119,7 +119,7 @@ pub fn find_arbitrage(
         &mut problem,
         &alpha,
         &beta,
-        &option_data,
+        option_data,
         &asset_prices,
         net_investment.clone(), // Pass net_investment instead of income and expenditure
     );
@@ -168,15 +168,16 @@ fn add_state_payoff_constraints(
 ) {
     let num_states = asset_prices.len();
 
-    for state in 0..num_states {
+    for state in asset_prices.iter().take(num_states) {
         let mut state_payoff = Expression::from(0.0);
         for (i, option) in option_data.iter().enumerate() {
             let intrinsic_value = match option.option_type.as_str() {
-                "call" => f64::max(asset_prices[state] - option.k, 0.0),
-                "put" => f64::max(option.k - asset_prices[state], 0.0),
+                "call" => f64::max(state - option.k, 0.0),
+                "put" => f64::max(option.k - state, 0.0),
                 _ => 0.0,
             };
-            state_payoff = state_payoff + intrinsic_value * (alpha[i] - beta[i]);
+
+            state_payoff += intrinsic_value * (alpha[i] - beta[i])
         }
         // Net profit in state = state_payoff - net_investment
         let net_profit = state_payoff - net_investment.clone();
