@@ -137,6 +137,7 @@ pub fn find_arbitrage(
         &market_prices,
         &transaction_costs,
     );
+
     problem = problem.with(constraint!(total_capital_constraint <= capital));
 
     // Liquidity constraints
